@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd apps/web && bun run build",
+  "buildCommand": "bun run build",
   "outputDirectory": "apps/web/dist",
   "installCommand": "bun install"
 }
