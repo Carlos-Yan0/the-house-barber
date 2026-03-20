@@ -1,6 +1,5 @@
 {
-  "buildCommand": "cd apps/web && vite build",
+  "buildCommand": "cd apps/web && bun run build",
   "outputDirectory": "apps/web/dist",
-  "installCommand": "bun install",
-  "framework": "vite"
+  "installCommand": "bun install"
 }
