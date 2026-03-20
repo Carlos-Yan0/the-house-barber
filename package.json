@@ -1,0 +1,17 @@
+{
+  "name": "the-house-barber",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:api": "bun run --filter @thb/api dev",
+    "dev:web": "bun run --filter @thb/web dev",
+    "build": "bun run --filter '*' build",
+    "db:generate": "cd apps/api && bun prisma generate",
+    "db:migrate": "cd apps/api && bun prisma migrate deploy",
+    "db:push": "cd apps/api && bun prisma db push",
+    "db:studio": "cd apps/api && bun prisma studio",
+    "db:seed": "cd apps/api && bun run src/utils/seed.ts"
+  }
+}

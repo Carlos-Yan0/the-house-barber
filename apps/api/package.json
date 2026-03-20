@@ -1,0 +1,31 @@
+{
+  "name": "@thb/api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "prisma": "prisma",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:seed": "bun run src/utils/seed.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "1.1.1",
+    "@elysiajs/jwt": "1.1.1",
+    "@elysiajs/swagger": "1.1.6",
+    "@prisma/client": "6.1.0",
+    "elysia": "1.1.26",
+    "zod": "^3.23.8",
+    "bcryptjs": "^2.4.3",
+    "date-fns": "^3.6.0",
+    "date-fns-tz": "^3.2.0"
+  },
+  "devDependencies": {
+    "prisma": "6.1.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bun-types": "latest"
+  }
+}

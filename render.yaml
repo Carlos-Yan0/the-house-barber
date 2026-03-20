@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: the-house-barber-api
+    runtime: node
+    region: ohio
+    plan: free
+    rootDir: apps/api
+    buildCommand: "bun install && bunx prisma generate && bunx prisma migrate deploy"
+    startCommand: "bun start"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false
+      - key: API_URL
+        sync: false
