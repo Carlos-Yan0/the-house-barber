@@ -1,7 +1,7 @@
 // src/pages/barber/BarberEarningsPage.tsx
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { TrendingUp, DollarSign, CheckCircle, Clock } from "lucide-react";
 import { barbersApi } from "@/lib/api";
@@ -16,11 +16,13 @@ export function BarberEarningsPage() {
 
   const [month, setMonth] = useState(format(new Date(), "yyyy-MM"));
 
-  const startDate = format(new Date(month + "-01"), "yyyy-MM-dd");
-  const endDate = format(
-    endOfMonth(new Date(month + "-01")),
-    "yyyy-MM-dd"
-  );
+  // FIX: parse year/month diretamente para evitar bug de fuso horário
+  // new Date("2026-03-01") cria UTC midnight → no Brasil (UTC-3) vira 28/02
+  const [year, mon] = month.split("-").map(Number);
+  const firstDay  = new Date(year, mon - 1, 1);
+  const lastDay   = endOfMonth(firstDay);
+  const startDate = format(firstDay, "yyyy-MM-dd");
+  const endDate   = format(lastDay,  "yyyy-MM-dd");
 
   const { data, isLoading } = useQuery({
     queryKey: ["earnings", barberId, month],

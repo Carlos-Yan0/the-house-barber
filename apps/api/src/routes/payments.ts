@@ -30,15 +30,7 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
         const paid = mpStatus === "approved";
 
         if (paid) {
-          // Atualiza banco automaticamente ao confirmar pagamento
-          await prisma.comanda.update({
-            where: { appointmentId: params.appointmentId },
-            data: {
-              paymentStatus: "PAID",
-              paymentMethod: "PIX",
-              paidAt:        new Date(),
-            },
-          });
+          await confirmPixPayment(params.appointmentId, comanda.pixTxId);
         }
 
         return { status: mpStatus, paid };
@@ -55,20 +47,16 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
   .post(
     "/webhook",
     async ({ body, headers, set }) => {
-      // Verificação básica do webhook
       const secret = process.env.MP_WEBHOOK_SECRET;
       if (secret) {
         const signature = headers["x-signature"] as string | undefined;
-        // Em produção: validar HMAC-SHA256 do body com o secret
-        // Por ora apenas logamos — implemente conforme docs do MP
         if (!signature) {
           console.warn("[Webhook] Requisição sem x-signature");
         }
       }
 
       const payload = body as any;
-      
-      // MP envia notificações de vários tipos; só processamos payment.updated
+
       if (payload?.action !== "payment.updated" || !payload?.data?.id) {
         return { received: true };
       }
@@ -85,23 +73,7 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
           });
 
           if (comanda && comanda.paymentStatus !== "PAID") {
-            await prisma.$transaction([
-              prisma.comanda.update({
-                where: { id: comanda.id },
-                data: {
-                  paymentStatus: "PAID",
-                  paymentMethod: "PIX",
-                  status:        "CLOSED",
-                  paidAt:        new Date(),
-                  closedAt:      new Date(),
-                },
-              }),
-              prisma.appointment.update({
-                where: { id: comanda.appointmentId },
-                data: { status: "CONFIRMED" },
-              }),
-            ]);
-
+            await confirmPixPayment(comanda.appointmentId, mpPaymentId);
             console.log(`[Webhook] PIX aprovado — comanda ${comanda.id}`);
           }
         }
@@ -109,10 +81,55 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
         console.error("[Webhook] Erro ao processar:", err);
       }
 
-      // MP exige sempre 200
       return { received: true };
     },
-    {
-      body: t.Any(),
-    }
+    { body: t.Any() }
   );
+
+// ── Função auxiliar: confirma pagamento PIX e cria comissão ──────────────────
+async function confirmPixPayment(appointmentId: string, pixTxId: string) {
+  const comanda = await prisma.comanda.findFirst({
+    where: { appointmentId },
+    include: {
+      appointment: {
+        include: {
+          barberProfile: true,
+        },
+      },
+    },
+  });
+
+  if (!comanda || comanda.paymentStatus === "PAID") return;
+
+  // Fecha comanda, confirma agendamento e cria comissão numa transação
+  await prisma.$transaction([
+    prisma.comanda.update({
+      where: { id: comanda.id },
+      data: {
+        paymentStatus: "PAID",
+        paymentMethod: "PIX",
+        status: "CLOSED",
+        paidAt: new Date(),
+        closedAt: new Date(),
+      },
+    }),
+    prisma.appointment.update({
+      where: { id: appointmentId },
+      data: { status: "CONFIRMED" },
+    }),
+  ]);
+
+  // Cria comissão do barbeiro (upsert evita duplicata)
+  const bp = comanda.appointment.barberProfile;
+  await prisma.commission.upsert({
+    where: { comandaId: comanda.id },
+    create: {
+      barberProfileId: bp.id,
+      comandaId: comanda.id,
+      grossAmount: comanda.totalAmount,
+      commissionRate: bp.commissionRate,
+      commissionAmount: Number(comanda.totalAmount) * bp.commissionRate,
+    },
+    update: {},
+  });
+}
