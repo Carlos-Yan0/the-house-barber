@@ -1,7 +1,7 @@
 // src/pages/admin/AdminReportsPage.tsx
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, endOfMonth } from "date-fns";
 import { BarChart3, DollarSign, TrendingUp, CheckCircle } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { StatsCard, Button, Spinner, EmptyState, Badge } from "@/components/ui";
@@ -12,8 +12,13 @@ export function AdminReportsPage() {
   const qc = useQueryClient();
   const [month, setMonth] = useState(format(new Date(), "yyyy-MM"));
 
-  const start = format(new Date(month + "-01"), "yyyy-MM-dd");
-  const end = format(endOfMonth(new Date(month + "-01")), "yyyy-MM-dd");
+  // FIX: parse year/month diretamente para evitar bug de fuso horário
+  // new Date("2026-03-01") cria UTC midnight → no Brasil (UTC-3) vira 28/02
+  const [year, mon] = month.split("-").map(Number);
+  const firstDay  = new Date(year, mon - 1, 1);
+  const lastDay   = endOfMonth(firstDay);
+  const start     = format(firstDay, "yyyy-MM-dd");
+  const end       = format(lastDay,  "yyyy-MM-dd");
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-revenue", month],

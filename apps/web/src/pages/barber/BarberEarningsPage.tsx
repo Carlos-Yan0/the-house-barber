@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, endOfMonth } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { TrendingUp, DollarSign, CheckCircle, Clock } from "lucide-react";
 import { barbersApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
@@ -60,17 +59,17 @@ export function BarberEarningsPage() {
         />
       </div>
 
-      {/* Stats */}
+      {/* Stats — apenas valores de comissão, sem expor o bruto ao barbeiro */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <StatsCard
-          label="Total bruto"
-          value={formatCurrency(data?.totalGross ?? 0)}
-          icon={<DollarSign size={16} />}
-        />
-        <StatsCard
-          label="Suas comissões"
+          label="Total do mês"
           value={formatCurrency(data?.totalCommission ?? 0)}
           icon={<TrendingUp size={16} />}
+        />
+        <StatsCard
+          label="Atendimentos"
+          value={commissions.length}
+          icon={<DollarSign size={16} />}
         />
         <StatsCard
           label="Já recebido"
@@ -118,10 +117,6 @@ export function BarberEarningsPage() {
                 <div className="text-right">
                   <p className="font-semibold text-gold-400">
                     {formatCurrency(c.commissionAmount)}
-                  </p>
-                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                    {Math.round(c.commissionRate * 100)}% de{" "}
-                    {formatCurrency(c.grossAmount)}
                   </p>
                   <span
                     className={cn(
