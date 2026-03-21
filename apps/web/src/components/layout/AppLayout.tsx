@@ -21,31 +21,30 @@ interface NavItem {
   to: string;
   icon: React.ReactNode;
   label: string;
+  shortLabel: string; // label curto para o bottom nav mobile
   roles: string[];
 }
 
 const NAV_ITEMS: NavItem[] = [
   // Client
-  { to: "/agendar",      icon: <Scissors size={20} />,       label: "Agendar",       roles: ["CLIENT", "ADMIN", "BARBER"] },
-  { to: "/agendamentos", icon: <Calendar size={20} />,        label: "Meus horários", roles: ["CLIENT"] },
-  { to: "/perfil",       icon: <User size={20} />,            label: "Perfil",        roles: ["CLIENT", "ADMIN", "BARBER"] },
+  { to: "/agendar",      icon: <Scissors size={20} />,       label: "Agendar",       shortLabel: "Agendar",    roles: ["CLIENT", "ADMIN", "BARBER"] },
+  { to: "/agendamentos", icon: <Calendar size={20} />,        label: "Meus horários", shortLabel: "Horários",   roles: ["CLIENT"] },
+  { to: "/perfil",       icon: <User size={20} />,            label: "Perfil",        shortLabel: "Perfil",     roles: ["CLIENT", "ADMIN", "BARBER"] },
 
   // Barber
-  { to: "/barbeiro/dashboard", icon: <LayoutDashboard size={20} />, label: "Dashboard",    roles: ["BARBER"] },
-  { to: "/barbeiro/agenda",    icon: <Calendar size={20} />,        label: "Minha Agenda", roles: ["BARBER"] },
-  { to: "/barbeiro/comandas",  icon: <ClipboardList size={20} />,   label: "Comandas",     roles: ["BARBER"] },
-  { to: "/barbeiro/ganhos",    icon: <TrendingUp size={20} />,      label: "Ganhos",       roles: ["BARBER"] },
+  { to: "/barbeiro/dashboard", icon: <LayoutDashboard size={20} />, label: "Dashboard",    shortLabel: "Dashboard", roles: ["BARBER"] },
+  { to: "/barbeiro/agenda",    icon: <Calendar size={20} />,        label: "Minha Agenda", shortLabel: "Agenda",    roles: ["BARBER"] },
+  { to: "/barbeiro/comandas",  icon: <ClipboardList size={20} />,   label: "Comandas",     shortLabel: "Comandas",  roles: ["BARBER"] },
+  { to: "/barbeiro/ganhos",    icon: <TrendingUp size={20} />,      label: "Ganhos",       shortLabel: "Ganhos",    roles: ["BARBER"] },
 
   // Admin
-  { to: "/admin/dashboard",  icon: <LayoutDashboard size={20} />, label: "Dashboard",  roles: ["ADMIN"] },
-  { to: "/admin/servicos",   icon: <Scissors size={20} />,        label: "Serviços",   roles: ["ADMIN"] },
-  { to: "/admin/barbeiros",  icon: <Users size={20} />,            label: "Barbeiros",  roles: ["ADMIN"] },
-  { to: "/admin/relatorios", icon: <BarChart3 size={20} />,        label: "Relatórios", roles: ["ADMIN"] },
+  { to: "/admin/dashboard",  icon: <LayoutDashboard size={20} />, label: "Dashboard",  shortLabel: "Dashboard", roles: ["ADMIN"] },
+  { to: "/admin/servicos",   icon: <Scissors size={20} />,        label: "Serviços",   shortLabel: "Serviços",  roles: ["ADMIN"] },
+  { to: "/admin/barbeiros",  icon: <Users size={20} />,            label: "Barbeiros",  shortLabel: "Barbeiros", roles: ["ADMIN"] },
+  { to: "/admin/relatorios", icon: <BarChart3 size={20} />,        label: "Relatórios", shortLabel: "Relatórios",roles: ["ADMIN"] },
 ];
 
-// Bottom nav height in px — used to calculate the scroll-buffer padding.
-// Keep in sync with the nav element's h-16 (64px) + pb-safe.
-const BOTTOM_NAV_HEIGHT = "4rem"; // 64px = h-16
+const BOTTOM_NAV_HEIGHT = "4rem";
 
 export function AppLayout() {
   const { user, refreshToken, logout } = useAuthStore();
@@ -55,16 +54,14 @@ export function AppLayout() {
     user ? n.roles.includes(user.role) : false
   );
 
-  // Mobile bottom nav shows at most 4 items.
   const BOTTOM_NAV_BY_ROLE: Record<string, string[]> = {
     CLIENT: ["/agendar", "/agendamentos", "/perfil"],
     BARBER: ["/barbeiro/dashboard", "/barbeiro/agenda", "/barbeiro/comandas", "/barbeiro/ganhos", "/perfil"],
     ADMIN:  ["/admin/dashboard", "/admin/servicos", "/admin/barbeiros", "/admin/relatorios", "/perfil"],
   };
-  
+
   const bottomNavPaths = user ? (BOTTOM_NAV_BY_ROLE[user.role] ?? []) : [];
   const bottomNav = userNav.filter(item => bottomNavPaths.includes(item.to));
-  
 
   const handleLogout = async () => {
     try {
@@ -85,7 +82,6 @@ export function AppLayout() {
           <Logo />
         </div>
 
-        {/* User info */}
         <div className="px-4 py-4 border-b border-dark-50">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-gold-600/20 border border-gold-600/30 flex items-center justify-center text-gold-500 font-display font-semibold text-sm">
@@ -106,7 +102,6 @@ export function AppLayout() {
           </div>
         </div>
 
-        {/* Nav links */}
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
           <div className="space-y-1">
             {userNav.map((item) => (
@@ -129,7 +124,6 @@ export function AppLayout() {
           </div>
         </nav>
 
-        {/* Logout */}
         <div className="p-4 border-t border-dark-50">
           <button
             onClick={handleLogout}
@@ -153,18 +147,10 @@ export function AppLayout() {
           </div>
         </header>
 
-        {/* Page Content
-            FIX: On mobile the sticky bottom nav (h-16 ≈ 64px) overlaps the last
-            portion of the page content. We add a matching padding-bottom so the
-            user can always scroll the content fully into view.
-            `md:pb-0` removes the padding on desktop where there is no bottom nav. */}
         <div
           className="flex-1 overflow-auto md:pb-0"
           style={{ paddingBottom: `calc(${BOTTOM_NAV_HEIGHT} + env(safe-area-inset-bottom, 0px))` }}
         >
-          {/* The inner wrapper only applies the mobile padding; desktop gets none
-              via the md: override on the parent. We use an inline style so the
-              safe-area env() value is respected (Tailwind can't express this). */}
           <div className="md:pb-0">
             <Outlet />
           </div>
@@ -179,7 +165,7 @@ export function AppLayout() {
                 to={item.to}
                 className={({ isActive }) =>
                   cn(
-                    "flex-1 flex flex-col items-center justify-center gap-1 text-[10px] font-medium transition-all duration-200",
+                    "flex-1 flex flex-col items-center justify-center gap-1 transition-all duration-200 px-1",
                     isActive
                       ? "text-gold-400"
                       : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
@@ -187,7 +173,10 @@ export function AppLayout() {
                 }
               >
                 {item.icon}
-                <span className="leading-none">{item.label}</span>
+                {/* shortLabel evita quebra de linha no bottom nav mobile */}
+                <span className="text-[10px] font-medium leading-none text-center w-full truncate">
+                  {item.shortLabel}
+                </span>
               </NavLink>
             ))}
           </div>

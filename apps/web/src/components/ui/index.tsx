@@ -294,10 +294,12 @@ interface StatsCardProps {
 export function StatsCard({ label, value, icon, trend, className }: StatsCardProps) {
   return (
     <div className={cn("card-elevated p-4", className)}>
-      <div className="flex items-start justify-between mb-2">
-        <p className="section-label">{label}</p>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        {/* min-w-0 + flex-1 garantem que o label trunca antes de empurrar o ícone */}
+        <p className="section-label min-w-0 flex-1 truncate">{label}</p>
         {icon && (
-          <div className="p-2 rounded-lg bg-gold-600/10 text-gold-500">
+          // shrink-0 impede o ícone de encolher ou de ser empurrado pra fora do card
+          <div className="p-1.5 rounded-lg bg-gold-600/10 text-gold-500 shrink-0">
             {icon}
           </div>
         )}
