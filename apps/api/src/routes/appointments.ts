@@ -29,7 +29,10 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       }
       const service = await prisma.service.findUnique({ where: { id: serviceId as string } });
       if (!service) { set.status = 404; return { error: "Serviço não encontrado" }; }
-      const slots = await getAvailableSlots(barberId as string, new Date(date as string), service.duration);
+
+      // FIX: passa a string diretamente — converter para Date aqui causa
+      // deslocamento de fuso (UTC midnight → dia anterior em BRT).
+      const slots = await getAvailableSlots(barberId as string, date as string, service.duration);
       return { slots, date, barberId, serviceId };
     },
     {
@@ -61,7 +64,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       }
 
       if (query.date) {
-        // Parse date in Brazil timezone to avoid UTC offset issues
         const [y, m, d] = (query.date as string).split("-").map(Number);
         const dayStartBR = fromZonedTime(`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T00:00:00`, TIMEZONE);
         const dayEndBR   = fromZonedTime(`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}T23:59:59`, TIMEZONE);
@@ -112,16 +114,13 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       const startTime = new Date(scheduledAt);
       const endsAt = addMinutes(startTime, service.duration);
 
-      // Check conflicts
+      // Verificação de conflito simplificada — cobre todos os casos de sobreposição
       const conflict = await prisma.appointment.findFirst({
         where: {
           barberProfileId,
           status: { notIn: ["CANCELLED", "NO_SHOW"] },
-          OR: [
-            { scheduledAt: { lte: startTime }, endsAt: { gt: startTime } },
-            { scheduledAt: { lt: endsAt }, endsAt: { gte: endsAt } },
-            { scheduledAt: { gte: startTime }, endsAt: { lte: endsAt } },
-          ],
+          scheduledAt: { lt: endsAt },
+          endsAt: { gt: startTime },
         },
       });
       if (conflict) { set.status = 409; return { error: "Horário já ocupado" }; }
