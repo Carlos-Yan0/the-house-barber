@@ -5,7 +5,7 @@ services:
     region: ohio
     plan: free
     rootDir: apps/api
-    buildCommand: "bun install && bunx prisma generate && bunx prisma migrate deploy"
+    buildCommand: "bun install && bunx prisma generate && bunx prisma db push"
     startCommand: "bun start"
     envVars:
       - key: NODE_ENV
