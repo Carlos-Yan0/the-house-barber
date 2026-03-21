@@ -8,6 +8,7 @@ import { appointmentRoutes } from "./routes/appointments";
 import { barberRoutes } from "./routes/barbers";
 import { comandaRoutes } from "./routes/comandas";
 import { adminRoutes } from "./routes/admin";
+import { paymentRoutes } from "./routes/payments";
 import { keepAlive } from "./utils/keepAlive";
 
 const PORT = Number(process.env.PORT) || 3333;
@@ -30,18 +31,18 @@ const app = new Elysia()
           description: "Sistema de agendamento para barbearia",
         },
         tags: [
-          { name: "Auth", description: "Autenticação e autorização" },
-          { name: "Services", description: "Serviços da barbearia" },
+          { name: "Auth",         description: "Autenticação e autorização" },
+          { name: "Services",     description: "Serviços da barbearia" },
           { name: "Appointments", description: "Agendamentos" },
-          { name: "Barbers", description: "Barbeiros" },
-          { name: "Comandas", description: "Gestão de comandas" },
-          { name: "Admin", description: "Painel administrativo" },
+          { name: "Barbers",      description: "Barbeiros" },
+          { name: "Comandas",     description: "Gestão de comandas" },
+          { name: "Admin",        description: "Painel administrativo" },
+          { name: "Payments",     description: "Pagamentos PIX" },
         ],
       },
     })
   )
 
-  // Health check - anti cold-start
   .get(
     "/healthcheck",
     () => ({
@@ -50,28 +51,23 @@ const app = new Elysia()
       service: "the-house-barber-api",
       version: "1.0.0",
     }),
-    {
-      detail: { tags: ["System"], summary: "Health check endpoint" },
-    }
+    { detail: { tags: ["System"], summary: "Health check endpoint" } }
   )
 
-  // API routes
   .use(authRoutes)
   .use(serviceRoutes)
   .use(appointmentRoutes)
   .use(barberRoutes)
   .use(comandaRoutes)
   .use(adminRoutes)
+  .use(paymentRoutes)
 
   .onError(({ code, error, set }) => {
     console.error(`[Error ${code}]:`, error);
 
     if (code === "VALIDATION") {
       set.status = 422;
-      return {
-        error: "Validation Error",
-        details: error.message,
-      };
+      return { error: "Validation Error", details: error.message };
     }
 
     if (code === "NOT_FOUND") {
@@ -82,19 +78,15 @@ const app = new Elysia()
     set.status = 500;
     return {
       error: "Internal Server Error",
-      message:
-        process.env.NODE_ENV === "development" ? error.message : undefined,
+      message: process.env.NODE_ENV === "development" ? error.message : undefined,
     };
   })
 
   .listen(PORT);
 
-console.log(
-  `🚀 The House Barber API running at http://localhost:${PORT}`
-);
+console.log(`🚀 The House Barber API running at http://localhost:${PORT}`);
 console.log(`📚 Swagger docs at http://localhost:${PORT}/swagger`);
 
-// Start keep-alive ping for Render free tier
 if (process.env.NODE_ENV === "production") {
   keepAlive();
 }

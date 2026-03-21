@@ -4,20 +4,18 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader } from "../lib/getUser";
 import { getAvailableSlots } from "../services/availability.service";
+import { createPixPayment } from "../services/mercadopago.service";
 import { addMinutes, format } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
 
 const TIMEZONE = "America/Sao_Paulo";
 
-// Brazil is permanently UTC-3 since DST was abolished in 2019.
-const BRT_OFFSET = "-03:00";
-
 const createSchema = z.object({
   barberProfileId: z.string(),
-  serviceId: z.string(),
-  // ISO string que o frontend envia já em BRT: "2026-03-21T09:00:00-03:00"
-  scheduledAt: z.string(),
-  notes: z.string().optional(),
+  serviceId:       z.string(),
+  scheduledAt:     z.string(),
+  paymentMethod:   z.enum(["CASH", "PIX"]),
+  notes:           z.string().optional(),
 });
 
 export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
@@ -33,7 +31,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "barberId, date e serviceId são obrigatórios" };
       }
 
-      // Validar formato da data
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date as string)) {
         set.status = 400;
         return { error: "date deve estar no formato yyyy-MM-dd" };
@@ -47,9 +44,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Serviço não encontrado" };
       }
 
-      // IMPORTANTE: passa a string diretamente — NÃO converter para Date aqui.
-      // new Date("yyyy-MM-dd") cria UTC midnight que ao converter para BRT
-      // retrocede um dia inteiro.
       const slots = await getAvailableSlots(
         barberId as string,
         date as string,
@@ -78,7 +72,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       const page  = Math.max(1, Number(query.page)  || 1);
       const limit = Math.min(100, Number(query.limit) || 20);
       const skip  = (page - 1) * limit;
-
       const where: any = {};
 
       if (user.role === "CLIENT") {
@@ -86,7 +79,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       } else if (user.role === "BARBER" && user.barberProfile) {
         where.barberProfileId = user.barberProfile.id;
       }
-      // ADMIN vê tudo
 
       if (query.date) {
         const d = query.date as string;
@@ -98,9 +90,7 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         }
       }
 
-      if (query.status) {
-        where.status = query.status;
-      }
+      if (query.status) where.status = query.status;
 
       const [total, appointments] = await Promise.all([
         prisma.appointment.count({ where }),
@@ -116,7 +106,7 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
             },
             service: true,
             comanda: {
-              select: { id: true, status: true, paymentStatus: true },
+              select: { id: true, status: true, paymentStatus: true, paymentMethod: true },
             },
           },
         }),
@@ -143,7 +133,7 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
     async ({ headers, body, set }) => {
       const auth = await getUserFromHeader(headers.authorization);
       if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
-      const userId = auth.user.id;
+      const { user } = auth;
 
       const parsed = createSchema.safeParse(body);
       if (!parsed.success) {
@@ -151,11 +141,11 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: parsed.error.flatten() };
       }
 
-      const { barberProfileId, serviceId, scheduledAt, notes } = parsed.data;
+      const { barberProfileId, serviceId, scheduledAt, paymentMethod, notes } = parsed.data;
 
-      // Verificar se barbeiro existe e está disponível
       const barber = await prisma.barberProfile.findUnique({
         where: { id: barberProfileId, isAvailable: true },
+        include: { user: { select: { name: true, email: true } } },
       });
       if (!barber) {
         set.status = 404;
@@ -178,22 +168,20 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
 
       const endsAt = addMinutes(startTime, service.duration);
 
-      // ── Validar que o slot ainda está disponível ──────────────────────────
-      // Extrair a data em BRT para re-verificar a agenda
-      const dateInBRT = format(
+      // Re-verificar disponibilidade do slot antes de criar
+      const localDateStr = format(
         new Date(startTime.toLocaleString("en-US", { timeZone: TIMEZONE })),
         "yyyy-MM-dd"
+      );
+      const requestedTime = format(
+        new Date(startTime.toLocaleString("en-US", { timeZone: TIMEZONE })),
+        "HH:mm"
       );
 
       const availableSlots = await getAvailableSlots(
         barberProfileId,
-        dateInBRT,
+        localDateStr,
         service.duration
-      );
-
-      const requestedTime = format(
-        new Date(startTime.toLocaleString("en-US", { timeZone: TIMEZONE })),
-        "HH:mm"
       );
 
       if (!availableSlots.includes(requestedTime)) {
@@ -204,30 +192,95 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
       // ── Criar agendamento ─────────────────────────────────────────────────
       const appointment = await prisma.appointment.create({
         data: {
-          clientId: userId,
+          clientId:       user.id,
           barberProfileId,
           serviceId,
-          scheduledAt: startTime,
+          scheduledAt:    startTime,
           endsAt,
           notes,
-          status: "PENDING",
+          status:         "PENDING",
         },
         include: {
           service: true,
           barberProfile: {
-            include: { user: { select: { name: true } } },
+            include: { user: { select: { name: true, email: true } } },
           },
+          client: { select: { id: true, name: true, email: true } },
         },
       });
 
       set.status = 201;
-      return appointment;
+
+      // ── Pagamento em dinheiro ─────────────────────────────────────────────
+      if (paymentMethod === "CASH") {
+        await prisma.comanda.create({
+          data: {
+            appointmentId: appointment.id,
+            totalAmount:   service.price,
+            status:        "OPEN",
+            paymentMethod: "CASH",
+            paymentStatus: "PENDING",
+          },
+        });
+
+        return { appointment, paymentMethod: "CASH", pix: null };
+      }
+
+      // ── Pagamento PIX ─────────────────────────────────────────────────────
+      try {
+        const clientName = appointment.client.name.trim();
+        const nameParts  = clientName.split(" ");
+        const firstName  = nameParts[0];
+        const lastName   = nameParts.slice(1).join(" ") || ".";
+
+        const pix = await createPixPayment({
+          appointmentId:  appointment.id,
+          amount:         Number(service.price),
+          description:    `${service.name} - The House Barber`,
+          payerEmail:     appointment.client.email,
+          payerFirstName: firstName,
+          payerLastName:  lastName,
+        });
+
+        await prisma.comanda.create({
+          data: {
+            appointmentId: appointment.id,
+            totalAmount:   service.price,
+            status:        "OPEN",
+            paymentMethod: "PIX",
+            paymentStatus: "PENDING",
+            pixTxId:       String(pix.mpPaymentId),
+          },
+        });
+
+        return {
+          appointment,
+          paymentMethod: "PIX",
+          pix: {
+            qrCode:        pix.qrCode,
+            qrCodeBase64:  pix.qrCodeBase64,
+            pixCopiaECola: pix.pixCopiaECola,
+            ticketUrl:     pix.ticketUrl,
+            expiresAt:     pix.expiresAt,
+            mpPaymentId:   pix.mpPaymentId,
+          },
+        };
+      } catch (err: any) {
+        // PIX falhou — cancela agendamento e retorna erro claro
+        await prisma.appointment.delete({ where: { id: appointment.id } });
+        console.error("[PIX] Erro ao criar pagamento:", err.message);
+        set.status = 502;
+        return {
+          error: "Erro ao iniciar pagamento PIX. Tente pagar em dinheiro ou tente novamente.",
+        };
+      }
     },
     {
       body: t.Object({
         barberProfileId: t.String(),
         serviceId:       t.String(),
         scheduledAt:     t.String(),
+        paymentMethod:   t.Union([t.Literal("CASH"), t.Literal("PIX")]),
         notes:           t.Optional(t.String()),
       }),
     }
@@ -255,19 +308,15 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Agendamento não encontrado" };
       }
 
-      // Verificar permissão
       const isClient = appointment.clientId === user.id;
-      const isBarber =
-        user.role === "BARBER" &&
-        appointment.barberProfile.userId === user.id;
-      const isAdmin = user.role === "ADMIN";
+      const isBarber = user.role === "BARBER" && appointment.barberProfile.userId === user.id;
+      const isAdmin  = user.role === "ADMIN";
 
       if (!isClient && !isBarber && !isAdmin) {
         set.status = 403;
         return { error: "Acesso negado" };
       }
 
-      // Verificar transição de status válida
       const allowed: Record<string, string[]> = {
         PENDING:     ["CONFIRMED", "CANCELLED"],
         CONFIRMED:   ["IN_PROGRESS", "CANCELLED", "NO_SHOW"],
@@ -276,9 +325,7 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
 
       if (!allowed[appointment.status]?.includes(status)) {
         set.status = 422;
-        return {
-          error: `Transição inválida: ${appointment.status} → ${status}`,
-        };
+        return { error: `Transição inválida: ${appointment.status} → ${status}` };
       }
 
       const updated = await prisma.appointment.update({
@@ -286,7 +333,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         data: { status: status as any, cancelReason },
       });
 
-      // Criar comanda automaticamente ao iniciar atendimento
       if (status === "IN_PROGRESS") {
         const service = await prisma.service.findUnique({
           where: { id: appointment.serviceId },
@@ -329,10 +375,7 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Agendamento não encontrado" };
       }
 
-      const isOwner = appointment.clientId === user.id;
-      const isStaff = user.role === "ADMIN" || user.role === "BARBER";
-
-      if (!isOwner && !isStaff) {
+      if (appointment.clientId !== user.id && user.role !== "ADMIN" && user.role !== "BARBER") {
         set.status = 403;
         return { error: "Acesso negado" };
       }

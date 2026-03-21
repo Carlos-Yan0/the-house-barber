@@ -10,19 +10,15 @@ export const api: AxiosInstance = axios.create({
   timeout: 15000,
 });
 
-// Request interceptor — attach token
 api.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().token;
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — refresh token on 401
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -30,19 +26,12 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
-
       const { refreshToken, setTokens, logout } = useAuthStore.getState();
 
-      if (!refreshToken) {
-        logout();
-        return Promise.reject(error);
-      }
+      if (!refreshToken) { logout(); return Promise.reject(error); }
 
       try {
-        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
-          refreshToken,
-        });
-
+        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken });
         setTokens(data.token, refreshToken);
         original.headers.Authorization = `Bearer ${data.token}`;
         return api(original);
@@ -56,91 +45,69 @@ api.interceptors.response.use(
   }
 );
 
-// ─── API helpers ────────────────────────────────────────────
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post("/auth/login", { email, password }),
-  register: (data: {
-    name: string;
-    email: string;
-    phone?: string;
-    password: string;
-  }) => api.post("/auth/register", data),
-  logout: (refreshToken: string) =>
-    api.post("/auth/logout", { refreshToken }),
-  me: () => api.get("/auth/me"),
+  login:    (email: string, password: string) => api.post("/auth/login", { email, password }),
+  register: (data: { name: string; email: string; phone?: string; password: string }) =>
+    api.post("/auth/register", data),
+  logout: (refreshToken: string) => api.post("/auth/logout", { refreshToken }),
+  me:     () => api.get("/auth/me"),
 };
 
 export const servicesApi = {
-  list: (all?: boolean) =>
-    api.get("/services", { params: all ? { all: "true" } : {} }),
-  get: (id: string) => api.get(`/services/${id}`),
-  create: (data: unknown) => api.post("/services", data),
-  update: (id: string, data: unknown) => api.put(`/services/${id}`, data),
-  delete: (id: string) => api.delete(`/services/${id}`),
+  list:   (all?: boolean)                    => api.get("/services", { params: all ? { all: "true" } : {} }),
+  get:    (id: string)                       => api.get(`/services/${id}`),
+  create: (data: unknown)                    => api.post("/services", data),
+  update: (id: string, data: unknown)        => api.put(`/services/${id}`, data),
+  delete: (id: string)                       => api.delete(`/services/${id}`),
 };
 
 export const barbersApi = {
-  list: () => api.get("/barbers"),
-  get: (id: string) => api.get(`/barbers/${id}`),
-  getSchedule: (id: string) => api.get(`/barbers/${id}/schedule`),
-  updateSchedule: (id: string, schedules: unknown[]) =>
-    api.put(`/barbers/${id}/schedule`, { schedules }),
-  blockDate: (id: string, date: string, reason?: string) =>
-    api.post(`/barbers/${id}/blocked-dates`, { date, reason }),
-  unblockDate: (id: string, dateId: string) =>
-    api.delete(`/barbers/${id}/blocked-dates/${dateId}`),
-  getEarnings: (
-    id: string,
-    params?: { startDate?: string; endDate?: string }
-  ) => api.get(`/barbers/${id}/earnings`, { params }),
+  list:           ()                                               => api.get("/barbers"),
+  get:            (id: string)                                     => api.get(`/barbers/${id}`),
+  getSchedule:    (id: string)                                     => api.get(`/barbers/${id}/schedule`),
+  updateSchedule: (id: string, schedules: unknown[])              => api.put(`/barbers/${id}/schedule`, { schedules }),
+  blockDate:      (id: string, date: string, reason?: string)     => api.post(`/barbers/${id}/blocked-dates`, { date, reason }),
+  unblockDate:    (id: string, dateId: string)                    => api.delete(`/barbers/${id}/blocked-dates/${dateId}`),
+  getEarnings:    (id: string, params?: { startDate?: string; endDate?: string }) =>
+    api.get(`/barbers/${id}/earnings`, { params }),
 };
 
 export const appointmentsApi = {
-  list: (params?: {
-    page?: number;
-    limit?: number;
-    date?: string;
-    status?: string;
-  }) => api.get("/appointments", { params }),
+  list: (params?: { page?: number; limit?: number; date?: string; status?: string }) =>
+    api.get("/appointments", { params }),
+
   create: (data: {
     barberProfileId: string;
-    serviceId: string;
-    scheduledAt: string;
-    notes?: string;
+    serviceId:       string;
+    scheduledAt:     string;
+    paymentMethod:   "CASH" | "PIX";
+    notes?:          string;
   }) => api.post("/appointments", data),
-  updateStatus: (
-    id: string,
-    status: string,
-    cancelReason?: string
-  ) => api.patch(`/appointments/${id}/status`, { status, cancelReason }),
+
+  updateStatus: (id: string, status: string, cancelReason?: string) =>
+    api.patch(`/appointments/${id}/status`, { status, cancelReason }),
+
   cancel: (id: string) => api.delete(`/appointments/${id}`),
-  getAvailability: (
-    barberId: string,
-    date: string,
-    serviceId: string
-  ) =>
-    api.get("/appointments/availability", {
-      params: { barberId, date, serviceId },
-    }),
+
+  getAvailability: (barberId: string, date: string, serviceId: string) =>
+    api.get("/appointments/availability", { params: { barberId, date, serviceId } }),
+};
+
+export const paymentsApi = {
+  pixStatus: (appointmentId: string) =>
+    api.get(`/payments/pix/status/${appointmentId}`),
 };
 
 export const comandasApi = {
-  list: (status?: string) =>
-    api.get("/comandas", { params: status ? { status } : {} }),
-  get: (id: string) => api.get(`/comandas/${id}`),
-  close: (id: string, paymentMethod: string) =>
-    api.patch(`/comandas/${id}/close`, { paymentMethod }),
+  list:  (status?: string)                    => api.get("/comandas", { params: status ? { status } : {} }),
+  get:   (id: string)                         => api.get(`/comandas/${id}`),
+  close: (id: string, paymentMethod: string)  => api.patch(`/comandas/${id}/close`, { paymentMethod }),
 };
 
 export const adminApi = {
-  dashboard: (date?: string) =>
-    api.get("/admin/dashboard", { params: date ? { date } : {} }),
-  revenue: (params?: { start?: string; end?: string }) =>
-    api.get("/admin/reports/revenue", { params }),
-  createBarber: (data: unknown) => api.post("/admin/barbers", data),
-  listUsers: (role?: string) =>
-    api.get("/admin/users", { params: role ? { role } : {} }),
-  payCommission: (id: string) =>
-    api.patch(`/admin/commissions/${id}/pay`, {}),
+  dashboard:    (date?: string)                               => api.get("/admin/dashboard", { params: date ? { date } : {} }),
+  revenue:      (params?: { start?: string; end?: string })  => api.get("/admin/reports/revenue", { params }),
+  createBarber: (data: unknown)                              => api.post("/admin/barbers", data),
+  listUsers:    (role?: string)                              => api.get("/admin/users", { params: role ? { role } : {} }),
+  payCommission:(id: string)                                 => api.patch(`/admin/commissions/${id}/pay`, {}),
 };
