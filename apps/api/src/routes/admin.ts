@@ -12,7 +12,7 @@ const createBarberSchema = z.object({
   email:          z.string().email().toLowerCase().trim(),
   password:       z.string().min(8).max(128),
   phone:          z.string().max(20).optional(),
-  commissionRate: z.number().min(0.1).max(0.9).default(0.5),
+  commissionRate: z.number().min(0).max(1).default(0.5),
 });
 
 const updateBarberSchema = z.object({

@@ -18,7 +18,8 @@ const createSchema = z.object({
   email:          z.string().email("E-mail inválido").trim(),
   password:       z.string().min(8, "Mínimo 8 caracteres").max(128, "Senha muito longa"),
   phone:          z.string().max(20, "Telefone inválido").optional().or(z.literal("")),
-  commissionRate: z.number().min(20, "Mínimo 20%").max(80, "Máximo 80%"),
+  commissionRate: z.number().min(0, "Mínimo 0%").max(100, "Máximo 100%"),
+
 });
 
 const editSchema = z.object({
@@ -139,13 +140,13 @@ export function AdminBarbersPage() {
             Taxa de comissão: {field.value}%
           </label>
           <input
-            type="range" min={20} max={80} step={5}
+            type="range" min={0} max={100} step={5}
             value={field.value}
             onChange={(e) => field.onChange(Number(e.target.value))}
             className="w-full accent-gold-500"
           />
           <div className="flex justify-between text-xs text-[var(--text-muted)] mt-1">
-            <span>20%</span><span>80%</span>
+            <span>0%</span><span>100%</span>
           </div>
           {fieldState.error && <p className="text-xs text-red-400 mt-1">{fieldState.error.message}</p>}
         </div>
