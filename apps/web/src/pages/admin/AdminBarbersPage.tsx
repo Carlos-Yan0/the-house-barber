@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, UserCheck, Percent, Edit2, PowerOff, Power } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { Button, EmptyState, Spinner, Modal, Input, Badge } from "@/components/ui";
-import { onlyDigits } from "../../lib/Inputhandlers";
+import { onlyDigits } from "@/lib/Inputhandlers";
 import type { User } from "@/types";
 import toast from "react-hot-toast";
 import { cn } from "@/lib/utils";

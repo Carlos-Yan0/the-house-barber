@@ -9,7 +9,6 @@ import { formatCurrency, formatTime, cn } from "@/lib/utils";
 import {
   STATUS_LABELS,
   STATUS_CLASSES,
-  PAYMENT_LABELS,
   type Comanda,
   type PaymentMethod,
   type Appointment,

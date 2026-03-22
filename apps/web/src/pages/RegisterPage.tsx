@@ -6,7 +6,7 @@ import { z } from "zod";
 import { authApi } from "@/lib/api";
 import { Logo } from "@/components/ui/Logo";
 import { Input, Button } from "@/components/ui";
-import { onlyDigits } from "@/lib/inputHandlers";
+import { onlyDigits } from "@/lib/Inputhandlers";
 import toast from "react-hot-toast";
 
 const schema = z

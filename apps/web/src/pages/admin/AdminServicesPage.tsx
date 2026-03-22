@@ -8,7 +8,7 @@ import { Plus, Edit2, Trash2, Clock, DollarSign } from "lucide-react";
 import { servicesApi } from "@/lib/api";
 import { Button, EmptyState, Spinner, Modal, Input, Badge } from "@/components/ui";
 import { formatCurrency, cn } from "@/lib/utils";
-import { onlyDigits, onlyDecimal } from "../../lib/Inputhandlers";
+import { onlyDigits, onlyDecimal } from "@/lib/Inputhandlers";
 import type { Service } from "@/types";
 import toast from "react-hot-toast";
 
