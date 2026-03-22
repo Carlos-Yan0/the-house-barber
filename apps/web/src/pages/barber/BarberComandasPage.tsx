@@ -1,8 +1,7 @@
 // src/pages/barber/BarberComandasPage.tsx
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { ClipboardList, CheckCircle, Clock, DollarSign } from "lucide-react";
 import { comandasApi, appointmentsApi } from "@/lib/api";
 import { Button, EmptyState, Spinner, Modal } from "@/components/ui";
@@ -14,7 +13,6 @@ import {
   type Comanda,
   type PaymentMethod,
   type Appointment,
-  type AppointmentStatus,
 } from "@/types";
 import toast from "react-hot-toast";
 
@@ -70,11 +68,32 @@ export function BarberComandasPage() {
 
   const appointments: Appointment[] = aptData?.data ?? [];
 
-  const activeAppointments = appointments.filter(
-    (a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
+  // Previously these two .filter() calls ran on every render (including
+  // unrelated state changes like opening/closing modals).
+  // useMemo ensures they only recompute when the appointments array changes.
+  const activeAppointments = useMemo(
+    () => appointments.filter((a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)),
+    [appointments]
   );
-  const doneAppointments = appointments.filter(
-    (a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
+
+  const doneAppointments = useMemo(
+    () => appointments.filter((a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)),
+    [appointments]
+  );
+
+  // Sorted views — also memoized since sorting is O(n log n).
+  const sortedActive = useMemo(
+    () => [...activeAppointments].sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+    ),
+    [activeAppointments]
+  );
+
+  const sortedDone = useMemo(
+    () => [...doneAppointments].sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+    ),
+    [doneAppointments]
   );
 
   return (
@@ -115,43 +134,41 @@ export function BarberComandasPage() {
             <div className="space-y-4">
               {activeAppointments.length > 0 && (
                 <div className="space-y-3">
-                  {activeAppointments
-                    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-                    .map((apt) => (
-                      <div key={apt.id} className="card-elevated p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-white text-sm">{apt.client?.name}</p>
-                            <p className="text-xs text-[var(--text-muted)]">
-                              {apt.service?.name} · {formatCurrency(apt.service?.price ?? 0)}
-                            </p>
-                            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] mt-1">
-                              <Clock size={11} />
-                              {formatTime(apt.scheduledAt)} — {formatTime(apt.endsAt)}
-                            </div>
+                  {sortedActive.map((apt) => (
+                    <div key={apt.id} className="card-elevated p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-white text-sm">{apt.client?.name}</p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {apt.service?.name} · {formatCurrency(apt.service?.price ?? 0)}
+                          </p>
+                          <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] mt-1">
+                            <Clock size={11} />
+                            {formatTime(apt.scheduledAt)} — {formatTime(apt.endsAt)}
                           </div>
-                          <button
-                            onClick={() => setNoShowId(apt.id)}
-                            className="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
-                          >
-                            Faltou
-                          </button>
                         </div>
-
-                        {apt.comanda && apt.comanda.status === "OPEN" && (
-                          <div className="mt-3 pt-3 border-t border-dark-50">
-                            <Button
-                              size="sm"
-                              className="w-full"
-                              icon={<DollarSign size={14} />}
-                              onClick={() => setCloseModal(apt.comanda!.id)}
-                            >
-                              Fechar comanda · {formatCurrency(apt.service?.price ?? 0)}
-                            </Button>
-                          </div>
-                        )}
+                        <button
+                          onClick={() => setNoShowId(apt.id)}
+                          className="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
+                        >
+                          Faltou
+                        </button>
                       </div>
-                    ))}
+
+                      {apt.comanda && apt.comanda.status === "OPEN" && (
+                        <div className="mt-3 pt-3 border-t border-dark-50">
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            icon={<DollarSign size={14} />}
+                            onClick={() => setCloseModal(apt.comanda!.id)}
+                          >
+                            Fechar comanda · {formatCurrency(apt.service?.price ?? 0)}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -159,21 +176,19 @@ export function BarberComandasPage() {
                 <div>
                   <p className="section-label mb-2">Finalizados</p>
                   <div className="space-y-2">
-                    {doneAppointments
-                      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-                      .map((apt) => (
-                        <div key={apt.id} className="card p-3 flex items-center justify-between gap-3 opacity-60">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-white font-medium truncate">{apt.client?.name}</p>
-                            <p className="text-xs text-[var(--text-muted)]">
-                              {apt.service?.name} · {formatTime(apt.scheduledAt)}
-                            </p>
-                          </div>
-                          <span className={STATUS_CLASSES[apt.status]}>
-                            {STATUS_LABELS[apt.status]}
-                          </span>
+                    {sortedDone.map((apt) => (
+                      <div key={apt.id} className="card p-3 flex items-center justify-between gap-3 opacity-60">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white font-medium truncate">{apt.client?.name}</p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {apt.service?.name} · {formatTime(apt.scheduledAt)}
+                          </p>
                         </div>
-                      ))}
+                        <span className={STATUS_CLASSES[apt.status]}>
+                          {STATUS_LABELS[apt.status]}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

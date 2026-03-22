@@ -1,5 +1,5 @@
 // src/pages/BookingPage.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -26,91 +26,15 @@ const STEPS: { key: Step; label: string; shortLabel: string }[] = [
   { key: "confirm",  label: "Confirmar", shortLabel: "Confirmar" },
 ];
 
-export function BookingPage() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
+// ── StepIndicator extracted as a pure memoized component ─────────────────────
+// Previously defined inline inside BookingPage, causing a full re-mount
+// (including DOM diff of all step nodes) on every keystroke / state change.
+interface StepIndicatorProps {
+  stepIndex: number;
+}
 
-  const [step, setStep] = useState<Step>("service");
-  const [selectedService,  setSelectedService]  = useState<Service | null>(null);
-  const [selectedBarber,   setSelectedBarber]   = useState<BarberProfile | null>(null);
-  const [selectedDate,     setSelectedDate]     = useState<Date>(startOfDay(new Date()));
-  const [selectedTime,     setSelectedTime]     = useState<string | null>(null);
-  const [paymentMethod,    setPaymentMethod]    = useState<PaymentMethod>("CASH");
-  const [notes,            setNotes]            = useState("");
-  const [calendarOffset,   setCalendarOffset]   = useState(0);
-
-  const { data: services = [], isLoading: loadingServices } = useQuery({
-    queryKey: ["services"],
-    queryFn: () => servicesApi.list().then((r) => r.data as Service[]),
-  });
-
-  const { data: barbers = [], isLoading: loadingBarbers } = useQuery({
-    queryKey: ["barbers"],
-    queryFn: () => barbersApi.list().then((r) => r.data as BarberProfile[]),
-    enabled: step === "barber",
-  });
-
-  const { data: availability, isLoading: loadingSlots } = useQuery({
-    queryKey: [
-      "availability",
-      selectedBarber?.id,
-      format(selectedDate, "yyyy-MM-dd"),
-      selectedService?.id,
-    ],
-    queryFn: () =>
-      appointmentsApi
-        .getAvailability(
-          selectedBarber!.id,
-          format(selectedDate, "yyyy-MM-dd"),
-          selectedService!.id
-        )
-        .then((r) => r.data),
-    enabled: step === "datetime" && !!selectedBarber && !!selectedService,
-  });
-
-  const bookMutation = useMutation({
-    mutationFn: () => {
-      const dateStr     = format(selectedDate, "yyyy-MM-dd");
-      const scheduledAt = new Date(`${dateStr}T${selectedTime!}:00${BRT_OFFSET}`).toISOString();
-
-      return appointmentsApi.create({
-        barberProfileId: selectedBarber!.id,
-        serviceId:       selectedService!.id,
-        scheduledAt,
-        paymentMethod,
-        notes: notes || undefined,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["appointments"] });
-      toast.success("Agendamento realizado! Pague na barbearia.");
-      navigate("/agendamentos");
-    },
-    onError: (err: any) => {
-      const message = err.response?.data?.error ?? "Erro ao agendar";
-      toast.error(message);
-      if (err.response?.status === 409) {
-        queryClient.invalidateQueries({ queryKey: ["availability"] });
-        setSelectedTime(null);
-        setStep("datetime");
-      }
-    },
-  });
-
-  useEffect(() => {
-    const serviceId = searchParams.get("service");
-    if (serviceId && services.length > 0) {
-      const found = services.find((s) => s.id === serviceId);
-      if (found) { setSelectedService(found); setStep("barber"); }
-    }
-  }, [searchParams, services]);
-
-  const stepIndex   = STEPS.findIndex((s) => s.key === step);
-  const dateOptions = Array.from({ length: 14 }, (_, i) => addDays(startOfDay(new Date()), i));
-  const visibleDates = dateOptions.slice(calendarOffset, calendarOffset + 7);
-
-  const StepIndicator = () => (
+const StepIndicator = memo(function StepIndicator({ stepIndex }: StepIndicatorProps) {
+  return (
     <div className="flex items-center mb-8">
       {STEPS.map((s, i) => {
         const isDone    = i < stepIndex;
@@ -143,6 +67,121 @@ export function BookingPage() {
       })}
     </div>
   );
+});
+
+// Pre-compute the 14-day window once at module level — it never changes within
+// a session and was previously recalculated on every render via Array.from().
+const DATE_OPTIONS = Array.from({ length: 14 }, (_, i) =>
+  addDays(startOfDay(new Date()), i)
+);
+
+export function BookingPage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const [step, setStep] = useState<Step>("service");
+  const [selectedService,  setSelectedService]  = useState<Service | null>(null);
+  const [selectedBarber,   setSelectedBarber]   = useState<BarberProfile | null>(null);
+  const [selectedDate,     setSelectedDate]     = useState<Date>(startOfDay(new Date()));
+  const [selectedTime,     setSelectedTime]     = useState<string | null>(null);
+  const [paymentMethod,    setPaymentMethod]    = useState<PaymentMethod>("CASH");
+  const [notes,            setNotes]            = useState("");
+  const [calendarOffset,   setCalendarOffset]   = useState(0);
+
+  // Derived values — memoized so child renders don't recompute them.
+  const stepIndex = useMemo(
+    () => STEPS.findIndex((s) => s.key === step),
+    [step]
+  );
+
+  const visibleDates = useMemo(
+    () => DATE_OPTIONS.slice(calendarOffset, calendarOffset + 7),
+    [calendarOffset]
+  );
+
+  const selectedDateStr = useMemo(
+    () => format(selectedDate, "yyyy-MM-dd"),
+    [selectedDate]
+  );
+
+  // ── Stable callbacks ──────────────────────────────────────────────────────
+  const handleSelectService = useCallback((service: Service) => {
+    setSelectedService(service);
+    setStep("barber");
+  }, []);
+
+  const handleSelectBarber = useCallback((barber: BarberProfile) => {
+    setSelectedBarber(barber);
+    setStep("datetime");
+  }, []);
+
+  const handleSelectDate = useCallback((date: Date) => {
+    setSelectedDate(date);
+    setSelectedTime(null);
+  }, []);
+
+  // ── Queries ───────────────────────────────────────────────────────────────
+  const { data: services = [], isLoading: loadingServices } = useQuery({
+    queryKey: ["services"],
+    queryFn: () => servicesApi.list().then((r) => r.data as Service[]),
+  });
+
+  const { data: barbers = [], isLoading: loadingBarbers } = useQuery({
+    queryKey: ["barbers"],
+    queryFn: () => barbersApi.list().then((r) => r.data as BarberProfile[]),
+    enabled: step === "barber",
+  });
+
+  const { data: availability, isLoading: loadingSlots } = useQuery({
+    queryKey: ["availability", selectedBarber?.id, selectedDateStr, selectedService?.id],
+    queryFn: () =>
+      appointmentsApi
+        .getAvailability(selectedBarber!.id, selectedDateStr, selectedService!.id)
+        .then((r) => r.data),
+    enabled: step === "datetime" && !!selectedBarber && !!selectedService,
+  });
+
+  const bookMutation = useMutation({
+    mutationFn: () => {
+      const scheduledAt = new Date(
+        `${selectedDateStr}T${selectedTime!}:00${BRT_OFFSET}`
+      ).toISOString();
+
+      return appointmentsApi.create({
+        barberProfileId: selectedBarber!.id,
+        serviceId:       selectedService!.id,
+        scheduledAt,
+        paymentMethod,
+        notes: notes || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      toast.success("Agendamento realizado! Pague na barbearia.");
+      navigate("/agendamentos");
+    },
+    onError: (err: any) => {
+      const message = err.response?.data?.error ?? "Erro ao agendar";
+      toast.error(message);
+      if (err.response?.status === 409) {
+        queryClient.invalidateQueries({ queryKey: ["availability"] });
+        setSelectedTime(null);
+        setStep("datetime");
+      }
+    },
+  });
+
+  // Pre-select service from URL query param.
+  useEffect(() => {
+    const serviceId = searchParams.get("service");
+    if (serviceId && services.length > 0) {
+      const found = services.find((s) => s.id === serviceId);
+      if (found) { setSelectedService(found); setStep("barber"); }
+    }
+  }, [searchParams, services]);
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
 
   return (
     <div className="page-container animate-fade-in">
@@ -151,7 +190,7 @@ export function BookingPage() {
         <p className="text-sm text-[var(--text-muted)] mt-1">Escolha um serviço e horário disponível</p>
       </div>
 
-      <StepIndicator />
+      <StepIndicator stepIndex={stepIndex} />
 
       {/* ── STEP 1: Serviço ── */}
       {step === "service" && (
@@ -164,7 +203,7 @@ export function BookingPage() {
               {services.map((service) => (
                 <button
                   key={service.id}
-                  onClick={() => { setSelectedService(service); setStep("barber"); }}
+                  onClick={() => handleSelectService(service)}
                   className={cn(
                     "w-full text-left p-4 rounded-xl border transition-all duration-200",
                     selectedService?.id === service.id
@@ -219,7 +258,7 @@ export function BookingPage() {
               {barbers.map((barber) => (
                 <button
                   key={barber.id}
-                  onClick={() => { setSelectedBarber(barber); setStep("datetime"); }}
+                  onClick={() => handleSelectBarber(barber)}
                   className="w-full text-left p-4 rounded-xl border bg-dark-300 border-dark-50 hover:border-gold-600/30 hover:bg-dark-200 transition-all duration-200 flex items-center gap-3"
                 >
                   <div className="w-11 h-11 rounded-full bg-gold-600/15 border border-gold-600/25 flex items-center justify-center text-gold-500 font-display font-semibold text-base shrink-0">
@@ -249,10 +288,20 @@ export function BookingPage() {
             <div className="flex items-center justify-between mb-3">
               <p className="section-label">Data</p>
               <div className="flex gap-1">
-                <button onClick={() => setCalendarOffset(Math.max(0, calendarOffset - 7))} disabled={calendarOffset === 0} className="p-1.5 rounded-lg hover:bg-dark-200 disabled:opacity-30 transition-all" aria-label="Semana anterior">
+                <button
+                  onClick={() => setCalendarOffset(Math.max(0, calendarOffset - 7))}
+                  disabled={calendarOffset === 0}
+                  className="p-1.5 rounded-lg hover:bg-dark-200 disabled:opacity-30 transition-all"
+                  aria-label="Semana anterior"
+                >
                   <ChevronLeft size={16} className="text-[var(--text-secondary)]" />
                 </button>
-                <button onClick={() => setCalendarOffset(Math.min(7, calendarOffset + 7))} disabled={calendarOffset >= 7} className="p-1.5 rounded-lg hover:bg-dark-200 disabled:opacity-30 transition-all" aria-label="Próxima semana">
+                <button
+                  onClick={() => setCalendarOffset(Math.min(7, calendarOffset + 7))}
+                  disabled={calendarOffset >= 7}
+                  className="p-1.5 rounded-lg hover:bg-dark-200 disabled:opacity-30 transition-all"
+                  aria-label="Próxima semana"
+                >
                   <ChevronRight size={16} className="text-[var(--text-secondary)]" />
                 </button>
               </div>
@@ -260,12 +309,12 @@ export function BookingPage() {
             <div className="grid grid-cols-7 gap-1">
               {visibleDates.map((date) => {
                 const dateKey    = format(date, "yyyy-MM-dd");
-                const isSelected = dateKey === format(selectedDate, "yyyy-MM-dd");
-                const isToday    = dateKey === format(new Date(), "yyyy-MM-dd");
+                const isSelected = dateKey === selectedDateStr;
+                const isToday    = dateKey === todayStr;
                 return (
                   <button
                     key={dateKey}
-                    onClick={() => { setSelectedDate(date); setSelectedTime(null); }}
+                    onClick={() => handleSelectDate(date)}
                     className={cn(
                       "flex flex-col items-center py-2 rounded-xl border text-xs transition-all duration-200",
                       isSelected ? "bg-gold-600 border-gold-500 text-white"
@@ -284,7 +333,9 @@ export function BookingPage() {
           </div>
 
           <div>
-            <p className="section-label mb-3">Horários disponíveis — {format(selectedDate, "dd/MM", { locale: ptBR })}</p>
+            <p className="section-label mb-3">
+              Horários disponíveis — {format(selectedDate, "dd/MM", { locale: ptBR })}
+            </p>
             {loadingSlots ? (
               <div className="flex justify-center py-8"><Spinner /></div>
             ) : !availability?.slots?.length ? (
@@ -328,7 +379,6 @@ export function BookingPage() {
           </button>
           <h2 className="text-base font-medium text-white mb-5">Confirmar agendamento</h2>
 
-          {/* Resumo */}
           <div className="card divide-y divide-dark-50 mb-5">
             <div className="p-4 flex items-center gap-3">
               <Scissors size={16} className="text-gold-500 shrink-0" />
@@ -369,11 +419,9 @@ export function BookingPage() {
             </div>
           </div>
 
-          {/* Forma de pagamento */}
           <div className="mb-5">
             <p className="section-label mb-3">Forma de pagamento</p>
             <div className="grid grid-cols-2 gap-3">
-              {/* Pagar na Barbearia */}
               <button
                 onClick={() => setPaymentMethod("CASH")}
                 className={cn(
@@ -395,7 +443,6 @@ export function BookingPage() {
                 )}
               </button>
 
-              {/* PIX — temporariamente indisponível */}
               <div className="p-4 rounded-xl border flex flex-col items-center gap-2 bg-dark-400 border-dark-50 opacity-50 cursor-not-allowed">
                 <QrCode size={22} className="text-[var(--text-muted)]" />
                 <div className="text-center">
@@ -413,7 +460,6 @@ export function BookingPage() {
             </p>
           </div>
 
-          {/* Observações */}
           <div className="mb-6">
             <label className="section-label block mb-2">Observações (opcional)</label>
             <textarea

@@ -9,6 +9,7 @@ import { barberRoutes } from "./routes/barbers";
 import { comandaRoutes } from "./routes/comandas";
 import { adminRoutes } from "./routes/admin";
 import { paymentRoutes } from "./routes/payments";
+import { startTokenCleanupJob } from "./jobs/cleanupTokens";
 
 const PORT = Number(process.env.PORT) || 3333;
 
@@ -82,6 +83,10 @@ const app = new Elysia()
   })
 
   .listen({ port: PORT, hostname: "0.0.0.0" });
+
+// ── Background jobs ──────────────────────────────────────────────────────────
+// Iniciados após o servidor subir para não atrasar o boot.
+startTokenCleanupJob();
 
 console.log(`🚀 The House Barber API running at http://localhost:${PORT}`);
 console.log(`📚 Swagger docs at http://localhost:${PORT}/swagger`);
