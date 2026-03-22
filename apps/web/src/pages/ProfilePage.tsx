@@ -1,17 +1,17 @@
 // src/pages/ProfilePage.tsx
 import { useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
-import { useMutation } from "@tanstack/react-query";
-import { LogOut, User, Mail, Phone, Shield } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { LogOut, User, Mail, Phone, Shield, Scissors } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
-import { authApi } from "@/lib/api";
-import { Input, Button } from "@/components/ui";
-import { getInitials } from "@/lib/utils";
+import { authApi, barbersApi } from "@/lib/api";
+import { Button } from "@/components/ui";
+import { getInitials, cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 
 export function ProfilePage() {
-  const { user, refreshToken, logout } = useAuthStore();
+  const { user, refreshToken, logout, setUser } = useAuthStore();
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const handleLogout = async () => {
     try {
@@ -22,12 +22,35 @@ export function ProfilePage() {
     toast.success("Até logo!");
   };
 
+  const availabilityMutation = useMutation({
+    mutationFn: (isAvailable: boolean) =>
+      barbersApi.updateAvailability(user!.barberProfile!.id, isAvailable),
+    onSuccess: (_, isAvailable) => {
+      // Atualiza o estado local do usuário para refletir a mudança imediatamente
+      if (user?.barberProfile) {
+        setUser({
+          ...user,
+          barberProfile: { ...user.barberProfile, isAvailable },
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["barbers"] });
+      toast.success(
+        isAvailable
+          ? "Você está disponível para agendamentos"
+          : "Você foi desativado como barbeiro"
+      );
+    },
+    onError: () => toast.error("Erro ao atualizar disponibilidade"),
+  });
+
   const roleName =
     user?.role === "ADMIN"
       ? "Administrador"
       : user?.role === "BARBER"
       ? "Barbeiro"
       : "Cliente";
+
+  const isAdminBarber = user?.role === "ADMIN" && !!user?.barberProfile;
 
   return (
     <div className="page-container animate-fade-in">
@@ -77,6 +100,45 @@ export function ProfilePage() {
           </div>
         )}
       </div>
+
+      {/* Toggle disponibilidade — só para admin que também é barbeiro */}
+      {isAdminBarber && (
+        <div className="card divide-y divide-dark-50 mb-6">
+          <div className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Scissors size={16} className="text-[var(--text-muted)] shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-white">
+                  Disponível como barbeiro
+                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {user?.barberProfile?.isAvailable
+                    ? "Aparecendo para agendamentos"
+                    : "Oculto para agendamentos"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() =>
+                availabilityMutation.mutate(!user?.barberProfile?.isAvailable)
+              }
+              disabled={availabilityMutation.isPending}
+              aria-label="Alternar disponibilidade como barbeiro"
+              className={cn(
+                "w-11 h-6 rounded-full transition-all duration-200 relative shrink-0 disabled:opacity-50",
+                user?.barberProfile?.isAvailable ? "bg-gold-600" : "bg-dark-50"
+              )}
+            >
+              <div
+                className={cn(
+                  "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all duration-200",
+                  user?.barberProfile?.isAvailable ? "left-5" : "left-0.5"
+                )}
+              />
+            </button>
+          </div>
+        </div>
+      )}
 
       <Button
         variant="danger"

@@ -110,8 +110,6 @@ export const comandaRoutes = new Elysia({ prefix: "/comandas" })
 
       const { paymentMethod } = body as { paymentMethod: string };
 
-      // Close the comanda and mark appointment as completed in a transaction
-      // to keep both operations atomic.
       const [updated] = await prisma.$transaction([
         prisma.comanda.update({
           where: { id: params.id },
@@ -129,25 +127,28 @@ export const comandaRoutes = new Elysia({ prefix: "/comandas" })
         }),
       ]);
 
-      // FIX: Use upsert instead of create to handle race conditions gracefully.
-      // The @unique constraint on comandaId prevents duplicate commissions, but
-      // a plain create() would throw an ugly error if called twice. Upsert is safe.
+      // Verifica se o barbeiro é ADMIN — se for, não gera comissão
       const bp = comanda.appointment.barberProfile;
-      const grossAmount = comanda.totalAmount;
-
-      await prisma.commission.upsert({
-        where: { comandaId: comanda.id },
-        create: {
-          barberProfileId: bp.id,
-          comandaId: comanda.id,
-          grossAmount,
-          commissionRate: bp.commissionRate,
-          commissionAmount: Number(grossAmount) * bp.commissionRate,
-        },
-        update: {}, // Commission already exists — no update needed.
+      const barberUser = await prisma.user.findUnique({
+        where: { id: bp.userId },
+        select: { role: true },
       });
 
-      return { ...updated, message: "Comanda fechada e comissão calculada" };
+      if (barberUser?.role !== "ADMIN") {
+        await prisma.commission.upsert({
+          where: { comandaId: comanda.id },
+          create: {
+            barberProfileId: bp.id,
+            comandaId: comanda.id,
+            grossAmount: comanda.totalAmount,
+            commissionRate: bp.commissionRate,
+            commissionAmount: Number(comanda.totalAmount) * bp.commissionRate,
+          },
+          update: {},
+        });
+      }
+
+      return { ...updated, message: "Comanda fechada com sucesso" };
     },
     { body: t.Object({ paymentMethod: t.String() }) }
   );

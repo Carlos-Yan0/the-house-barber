@@ -114,12 +114,33 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
     return { message: "Data desbloqueada com sucesso" };
   })
 
+  // PATCH /barbers/:id/availability — protected
+  // Permite ao próprio barbeiro (ou admin) ativar/desativar disponibilidade
+  // sem afetar o role ou conta do usuário.
+  .patch("/:id/availability", async ({ headers, params, body, set }) => {
+    const auth = await getUserFromHeader(headers.authorization);
+    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
+
+    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
+    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
+
+    if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
+      set.status = 403; return { error: "Acesso negado" };
+    }
+
+    const { isAvailable } = body as { isAvailable: boolean };
+
+    const updated = await prisma.barberProfile.update({
+      where: { id: params.id },
+      data: { isAvailable },
+    });
+
+    return updated;
+  }, {
+    body: t.Object({ isAvailable: t.Boolean() }),
+  })
+
   // GET /barbers/:id/earnings — protected
-  // FIX: Query desmembrada em duas etapas para reduzir uso de memória.
-  // O include aninhado anterior (commission → comanda → appointment → service + client)
-  // mantinha um grafo de objetos grande em RAM e causava OOM no Render Free (512MB).
-  // Agora buscamos só os campos necessários de commission/comanda numa query enxuta,
-  // e numa segunda query buscamos os detalhes de serviço/cliente por IDs coletados.
   .get("/:id/earnings", async ({ headers, params, query, set }) => {
     const auth = await getUserFromHeader(headers.authorization);
     if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
@@ -137,7 +158,6 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
       if (query.endDate) where.createdAt.lte = new Date(query.endDate as string);
     }
 
-    // Query 1 — apenas IDs e valores das comissões + IDs de appointment
     const commissions = await prisma.commission.findMany({
       where,
       select: {
@@ -149,21 +169,16 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
         paidAt: true,
         createdAt: true,
         comanda: {
-          select: {
-            id: true,
-            appointmentId: true,
-          },
+          select: { id: true, appointmentId: true },
         },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // Coleta IDs de appointment para busca enxuta
     const appointmentIds = commissions
       .map((c) => c.comanda?.appointmentId)
       .filter(Boolean) as string[];
 
-    // Query 2 — apenas serviço e cliente para cada appointment
     const appointments = appointmentIds.length
       ? await prisma.appointment.findMany({
           where: { id: { in: appointmentIds } },
@@ -177,18 +192,12 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
 
     const aptMap = new Map(appointments.map((a) => [a.id, a]));
 
-    // Monta resultado combinado
     const result = commissions.map((c) => {
       const apt = c.comanda?.appointmentId ? aptMap.get(c.comanda.appointmentId) : null;
       return {
         ...c,
         comanda: c.comanda
-          ? {
-              ...c.comanda,
-              appointment: apt
-                ? { service: apt.service, client: apt.client }
-                : null,
-            }
+          ? { ...c.comanda, appointment: apt ? { service: apt.service, client: apt.client } : null }
           : null,
       };
     });

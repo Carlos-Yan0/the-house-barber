@@ -6,7 +6,6 @@ import { getPaymentStatus } from "../services/mercadopago.service";
 export const paymentRoutes = new Elysia({ prefix: "/payments" })
 
   // ── GET /payments/pix/status/:appointmentId ───────────────────────────────
-  // Frontend faz polling para saber se o PIX foi pago
   .get("/pix/status/:appointmentId", async ({ params, set }) => {
     const comanda = await prisma.comanda.findFirst({
       where: { appointmentId: params.appointmentId },
@@ -18,12 +17,10 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
       return { error: "Comanda não encontrada" };
     }
 
-    // Se já está marcado como pago no banco, retorna direto
     if (comanda.paymentStatus === "PAID") {
       return { status: "approved", paid: true };
     }
 
-    // Se tem ID do MP, verifica status atual
     if (comanda.pixTxId) {
       try {
         const mpStatus = await getPaymentStatus(Number(comanda.pixTxId));
@@ -43,7 +40,6 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
   })
 
   // ── POST /payments/webhook ─────────────────────────────────────────────────
-  // Webhook do Mercado Pago notifica quando pagamento muda de status
   .post(
     "/webhook",
     async ({ body, headers, set }) => {
@@ -86,22 +82,19 @@ export const paymentRoutes = new Elysia({ prefix: "/payments" })
     { body: t.Any() }
   );
 
-// ── Função auxiliar: confirma pagamento PIX e cria comissão ──────────────────
+// ── Confirma pagamento PIX e cria comissão (exceto para admin) ───────────────
 async function confirmPixPayment(appointmentId: string, pixTxId: string) {
   const comanda = await prisma.comanda.findFirst({
     where: { appointmentId },
     include: {
       appointment: {
-        include: {
-          barberProfile: true,
-        },
+        include: { barberProfile: true },
       },
     },
   });
 
   if (!comanda || comanda.paymentStatus === "PAID") return;
 
-  // Fecha comanda, confirma agendamento e cria comissão numa transação
   await prisma.$transaction([
     prisma.comanda.update({
       where: { id: comanda.id },
@@ -119,17 +112,24 @@ async function confirmPixPayment(appointmentId: string, pixTxId: string) {
     }),
   ]);
 
-  // Cria comissão do barbeiro (upsert evita duplicata)
+  // Verifica se o barbeiro é ADMIN — se for, não gera comissão
   const bp = comanda.appointment.barberProfile;
-  await prisma.commission.upsert({
-    where: { comandaId: comanda.id },
-    create: {
-      barberProfileId: bp.id,
-      comandaId: comanda.id,
-      grossAmount: comanda.totalAmount,
-      commissionRate: bp.commissionRate,
-      commissionAmount: Number(comanda.totalAmount) * bp.commissionRate,
-    },
-    update: {},
+  const barberUser = await prisma.user.findUnique({
+    where: { id: bp.userId },
+    select: { role: true },
   });
+
+  if (barberUser?.role !== "ADMIN") {
+    await prisma.commission.upsert({
+      where: { comandaId: comanda.id },
+      create: {
+        barberProfileId: bp.id,
+        comandaId: comanda.id,
+        grossAmount: comanda.totalAmount,
+        commissionRate: bp.commissionRate,
+        commissionAmount: Number(comanda.totalAmount) * bp.commissionRate,
+      },
+      update: {},
+    });
+  }
 }
