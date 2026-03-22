@@ -110,8 +110,11 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         name: user.name,
       });
 
-      const refreshToken = await refreshJwt.sign({ sub: user.id });
-
+      const refreshToken = await refreshJwt.sign({
+        sub: user.id,
+        jti: crypto.randomUUID(), // garante unicidade
+      });
+      
       // Save refresh token
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);

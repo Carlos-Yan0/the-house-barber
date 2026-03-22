@@ -56,7 +56,7 @@ export function AdminDashboardPage() {
 
       {/* Este mês */}
       <p className="section-label mb-3">Este mês</p>
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="grid grid-cols-2 gap-3 mb-8">
         <StatsCard
           label="Agendamentos"
           value={stats?.month.appointments ?? 0}
@@ -65,18 +65,13 @@ export function AdminDashboardPage() {
           label="Receita"
           value={formatCurrency(stats?.month.revenue ?? 0)}
         />
-      </div>
-
-      {/* Geral — removido card de Barbeiros, mantido Clientes e Comissões */}
-      <p className="section-label mb-3">Geral</p>
-      <div className="grid grid-cols-2 gap-3 mb-8">
         <StatsCard
-          label="Clientes"
+          label="Clientes ativos"
           value={stats?.totals.clients ?? 0}
         />
         <StatsCard
-          label="Comissões pendentes"
-          value={formatCurrency(stats?.totals.pendingCommissions ?? 0)}
+          label="Comissões geradas"
+          value={formatCurrency(stats?.month.commissions ?? 0)}
         />
       </div>
 

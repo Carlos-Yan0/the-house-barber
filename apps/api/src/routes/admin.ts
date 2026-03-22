@@ -19,21 +19,53 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     if ("error" in (user as any)) return user;
 
     const date = query.date ? new Date(query.date as string) : new Date();
-    const [todayAppointments, monthAppointments, openComandas, monthRevenue, totalClients, totalBarbers, pendingCommissions] =
-      await Promise.all([
-        prisma.appointment.count({ where: { scheduledAt: { gte: startOfDay(date), lte: endOfDay(date) } } }),
-        prisma.appointment.count({ where: { scheduledAt: { gte: startOfMonth(date), lte: endOfMonth(date) } } }),
-        prisma.comanda.count({ where: { status: "OPEN" } }),
-        prisma.comanda.aggregate({ where: { status: "CLOSED", paymentStatus: "PAID", closedAt: { gte: startOfMonth(date), lte: endOfMonth(date) } }, _sum: { totalAmount: true } }),
-        prisma.user.count({ where: { role: "CLIENT", isActive: true } }),
-        prisma.user.count({ where: { role: "BARBER", isActive: true } }),
-        prisma.commission.aggregate({ where: { isPaid: false }, _sum: { commissionAmount: true } }),
-      ]);
+    const monthStart = startOfMonth(date);
+    const monthEnd   = endOfMonth(date);
+
+    const [
+      todayAppointments,
+      monthAppointments,
+      openComandas,
+      monthRevenue,
+      totalClients,
+      // Comissões geradas de comandas fechadas no mês corrente
+      monthCommissions,
+    ] = await Promise.all([
+      prisma.appointment.count({
+        where: { scheduledAt: { gte: startOfDay(date), lte: endOfDay(date) } },
+      }),
+      prisma.appointment.count({
+        where: { scheduledAt: { gte: monthStart, lte: monthEnd } },
+      }),
+      prisma.comanda.count({ where: { status: "OPEN" } }),
+      prisma.comanda.aggregate({
+        where: {
+          status: "CLOSED",
+          paymentStatus: "PAID",
+          closedAt: { gte: monthStart, lte: monthEnd },
+        },
+        _sum: { totalAmount: true },
+      }),
+      prisma.user.count({ where: { role: "CLIENT", isActive: true } }),
+      prisma.commission.aggregate({
+        where: {
+          comanda: {
+            status: "CLOSED",
+            closedAt: { gte: monthStart, lte: monthEnd },
+          },
+        },
+        _sum: { commissionAmount: true },
+      }),
+    ]);
 
     return {
       today: { appointments: todayAppointments, openComandas },
-      month: { appointments: monthAppointments, revenue: Number(monthRevenue._sum.totalAmount ?? 0) },
-      totals: { clients: totalClients, barbers: totalBarbers, pendingCommissions: Number(pendingCommissions._sum.commissionAmount ?? 0) },
+      month: {
+        appointments: monthAppointments,
+        revenue: Number(monthRevenue._sum.totalAmount ?? 0),
+        commissions: Number(monthCommissions._sum.commissionAmount ?? 0),
+      },
+      totals: { clients: totalClients },
     };
   }, { query: t.Object({ date: t.Optional(t.String()) }) })
 
