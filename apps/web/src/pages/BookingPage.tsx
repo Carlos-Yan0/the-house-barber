@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft, ChevronRight, Clock, DollarSign,
-  User, Calendar, Check, Scissors, Banknote, QrCode, Copy, CheckCheck,
+  User, Calendar, Check, Scissors, Banknote, QrCode,
 } from "lucide-react";
 import { format, addDays, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -26,174 +26,6 @@ const STEPS: { key: Step; label: string; shortLabel: string }[] = [
   { key: "confirm",  label: "Confirmar", shortLabel: "Confirmar" },
 ];
 
-// ── PIX Modal ───────────────────────────────────────────────────────────────
-interface PixData {
-  qrCode: string;
-  qrCodeBase64: string;
-  pixCopiaECola: string;
-  ticketUrl: string;
-  expiresAt: string;
-  mpPaymentId: number;
-}
-
-interface PixModalProps {
-  pix: PixData;
-  appointmentId: string;
-  onDone: () => void;
-}
-
-function PixModal({ pix, appointmentId, onDone }: PixModalProps) {
-  const [copied, setCopied] = useState(false);
-  const [paid, setPaid] = useState(false);
-  const queryClient = useQueryClient();
-
-  // Polling a cada 5s para verificar se o pagamento foi confirmado
-  useEffect(() => {
-    if (paid) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(
-          `${import.meta.env.VITE_API_URL ?? "http://localhost:3333"}/payments/pix/status/${appointmentId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${localStorage.getItem("thb-auth") 
-                ? JSON.parse(localStorage.getItem("thb-auth")!).state?.token 
-                : ""}`,
-            },
-          }
-        );
-        const data = await res.json();
-        if (data.paid) {
-          setPaid(true);
-          clearInterval(interval);
-          queryClient.invalidateQueries({ queryKey: ["appointments"] });
-          toast.success("Pagamento confirmado!");
-        }
-      } catch {
-        // Silenciar erros de polling
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [paid, appointmentId, queryClient]);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(pix.pixCopiaECola);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 3000);
-    toast.success("Código PIX copiado!");
-  };
-
-  const expiresDate = new Date(pix.expiresAt);
-  const expiresStr  = format(expiresDate, "HH:mm", { locale: ptBR });
-
-  return (
-    <div className="fixed inset-0 z-50 bg-dark-500/95 backdrop-blur-sm flex flex-col items-center justify-start overflow-y-auto py-8 px-4">
-      <div className="w-full max-w-sm animate-slide-up">
-
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-gold-600/15 border border-gold-600/25 flex items-center justify-center mx-auto mb-3">
-            <QrCode size={24} className="text-gold-500" />
-          </div>
-          {paid ? (
-            <>
-              <h2 className="font-display text-xl font-semibold text-white">Pago!</h2>
-              <p className="text-sm text-emerald-400 mt-1">Pagamento confirmado com sucesso</p>
-            </>
-          ) : (
-            <>
-              <h2 className="font-display text-xl font-semibold text-white">Pague com PIX</h2>
-              <p className="text-sm text-[var(--text-muted)] mt-1">Expira às {expiresStr}</p>
-            </>
-          )}
-        </div>
-
-        {paid ? (
-          <div className="card p-6 text-center mb-4">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center mx-auto mb-4">
-              <Check size={28} className="text-emerald-400" />
-            </div>
-            <p className="text-sm text-[var(--text-secondary)]">
-              Seu agendamento está confirmado. Até logo!
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* QR Code */}
-            {pix.qrCodeBase64 ? (
-              <div className="card p-4 flex items-center justify-center mb-4">
-                <img
-                  src={`data:image/png;base64,${pix.qrCodeBase64}`}
-                  alt="QR Code PIX"
-                  className="w-48 h-48 rounded-xl"
-                />
-              </div>
-            ) : (
-              <div className="card p-4 mb-4">
-                <p className="text-xs text-[var(--text-muted)] text-center">QR Code indisponível</p>
-              </div>
-            )}
-
-            {/* Copia e Cola */}
-            <div className="card p-4 mb-4">
-              <p className="section-label mb-2">Pix Copia e Cola</p>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-[var(--text-secondary)] flex-1 truncate font-mono bg-dark-400 rounded-lg px-3 py-2">
-                  {pix.pixCopiaECola.slice(0, 40)}...
-                </p>
-                <button
-                  onClick={handleCopy}
-                  className="p-2 rounded-lg bg-gold-600/15 border border-gold-600/25 text-gold-400 hover:bg-gold-600/25 transition-all shrink-0"
-                >
-                  {copied ? <CheckCheck size={16} /> : <Copy size={16} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Instruções */}
-            <div className="card p-4 mb-6">
-              <p className="section-label mb-2">Como pagar</p>
-              <ol className="space-y-1.5">
-                {[
-                  "Abra o app do seu banco",
-                  "Escolha pagar com PIX",
-                  "Escaneie o QR Code ou cole o código",
-                  "Confirme o pagamento",
-                ].map((step, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-[var(--text-secondary)]">
-                    <span className="w-4 h-4 rounded-full bg-gold-600/20 text-gold-400 text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                      {i + 1}
-                    </span>
-                    {step}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </>
-        )}
-
-        <Button
-          className="w-full"
-          size="lg"
-          variant={paid ? "gold" : "outline"}
-          onClick={onDone}
-        >
-          {paid ? "Ver meus agendamentos" : "Já paguei / ver agendamentos"}
-        </Button>
-
-        {!paid && (
-          <p className="text-xs text-[var(--text-muted)] text-center mt-3">
-            O agendamento já está reservado. Pague antes de {expiresStr}.
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── BookingPage ─────────────────────────────────────────────────────────────
 export function BookingPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -207,8 +39,6 @@ export function BookingPage() {
   const [paymentMethod,    setPaymentMethod]    = useState<PaymentMethod>("CASH");
   const [notes,            setNotes]            = useState("");
   const [calendarOffset,   setCalendarOffset]   = useState(0);
-  const [pixData,          setPixData]          = useState<PixData | null>(null);
-  const [pixAppointmentId, setPixAppointmentId] = useState<string>("");
 
   const { data: services = [], isLoading: loadingServices } = useQuery({
     queryKey: ["services"],
@@ -241,7 +71,7 @@ export function BookingPage() {
 
   const bookMutation = useMutation({
     mutationFn: () => {
-      const dateStr   = format(selectedDate, "yyyy-MM-dd");
+      const dateStr     = format(selectedDate, "yyyy-MM-dd");
       const scheduledAt = new Date(`${dateStr}T${selectedTime!}:00${BRT_OFFSET}`).toISOString();
 
       return appointmentsApi.create({
@@ -252,17 +82,10 @@ export function BookingPage() {
         notes: notes || undefined,
       });
     },
-    onSuccess: (res) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["appointments"] });
-      const data = res.data;
-
-      if (data.paymentMethod === "PIX" && data.pix) {
-        setPixData(data.pix);
-        setPixAppointmentId(data.appointment.id);
-      } else {
-        toast.success("Agendamento realizado! Pague na barbearia.");
-        navigate("/agendamentos");
-      }
+      toast.success("Agendamento realizado! Pague na barbearia.");
+      navigate("/agendamentos");
     },
     onError: (err: any) => {
       const message = err.response?.data?.error ?? "Erro ao agendar";
@@ -282,16 +105,6 @@ export function BookingPage() {
       if (found) { setSelectedService(found); setStep("barber"); }
     }
   }, [searchParams, services]);
-
-  if (pixData) {
-    return (
-      <PixModal
-        pix={pixData}
-        appointmentId={pixAppointmentId}
-        onDone={() => navigate("/agendamentos")}
-      />
-    );
-  }
 
   const stepIndex   = STEPS.findIndex((s) => s.key === step);
   const dateOptions = Array.from({ length: 14 }, (_, i) => addDays(startOfDay(new Date()), i));
@@ -446,7 +259,7 @@ export function BookingPage() {
             </div>
             <div className="grid grid-cols-7 gap-1">
               {visibleDates.map((date) => {
-                const dateKey   = format(date, "yyyy-MM-dd");
+                const dateKey    = format(date, "yyyy-MM-dd");
                 const isSelected = dateKey === format(selectedDate, "yyyy-MM-dd");
                 const isToday    = dateKey === format(new Date(), "yyyy-MM-dd");
                 return (
@@ -560,7 +373,7 @@ export function BookingPage() {
           <div className="mb-5">
             <p className="section-label mb-3">Forma de pagamento</p>
             <div className="grid grid-cols-2 gap-3">
-              {/* Dinheiro */}
+              {/* Pagar na Barbearia */}
               <button
                 onClick={() => setPaymentMethod("CASH")}
                 className={cn(
@@ -572,8 +385,8 @@ export function BookingPage() {
               >
                 <Banknote size={22} />
                 <div className="text-center">
-                  <p className="text-sm font-semibold">Dinheiro</p>
-                  <p className="text-[10px] opacity-70 mt-0.5">Paga na barbearia</p>
+                  <p className="text-sm font-semibold">Pagar na Barbearia</p>
+                  <p className="text-[10px] opacity-70 mt-0.5">No dia do atendimento</p>
                 </div>
                 {paymentMethod === "CASH" && (
                   <div className="w-4 h-4 rounded-full bg-gold-600 flex items-center justify-center">
@@ -582,39 +395,22 @@ export function BookingPage() {
                 )}
               </button>
 
-              {/* PIX */}
-              <button
-                onClick={() => setPaymentMethod("PIX")}
-                className={cn(
-                  "p-4 rounded-xl border flex flex-col items-center gap-2 transition-all duration-200",
-                  paymentMethod === "PIX"
-                    ? "bg-gold-600/15 border-gold-600/50 text-gold-400"
-                    : "bg-dark-300 border-dark-50 text-[var(--text-secondary)] hover:border-gold-600/20"
-                )}
-              >
-                <QrCode size={22} />
+              {/* PIX — temporariamente indisponível */}
+              <div className="p-4 rounded-xl border flex flex-col items-center gap-2 bg-dark-400 border-dark-50 opacity-50 cursor-not-allowed">
+                <QrCode size={22} className="text-[var(--text-muted)]" />
                 <div className="text-center">
-                  <p className="text-sm font-semibold">PIX</p>
-                  <p className="text-[10px] opacity-70 mt-0.5">Paga agora</p>
+                  <p className="text-sm font-semibold text-[var(--text-muted)]">PIX</p>
+                  <p className="text-[10px] mt-0.5 text-[var(--text-muted)]">Em breve</p>
                 </div>
-                {paymentMethod === "PIX" && (
-                  <div className="w-4 h-4 rounded-full bg-gold-600 flex items-center justify-center">
-                    <Check size={10} className="text-white" />
-                  </div>
-                )}
-              </button>
+                <span className="text-[9px] font-medium bg-yellow-500/15 text-yellow-400 border border-yellow-500/25 px-2 py-0.5 rounded-full">
+                  Indisponível
+                </span>
+              </div>
             </div>
 
-            {paymentMethod === "PIX" && (
-              <p className="text-xs text-[var(--text-muted)] mt-2 text-center">
-                Um QR Code será gerado. Você terá 30 minutos para pagar.
-              </p>
-            )}
-            {paymentMethod === "CASH" && (
-              <p className="text-xs text-[var(--text-muted)] mt-2 text-center">
-                Pague diretamente na barbearia no dia do atendimento.
-              </p>
-            )}
+            <p className="text-xs text-[var(--text-muted)] mt-2 text-center">
+              Pague diretamente na barbearia no dia do atendimento.
+            </p>
           </div>
 
           {/* Observações */}
@@ -634,11 +430,7 @@ export function BookingPage() {
             loading={bookMutation.isPending}
             onClick={() => bookMutation.mutate()}
           >
-            {paymentMethod === "PIX" ? (
-              <><QrCode size={16} /> Confirmar e pagar com PIX</>
-            ) : (
-              <><Check size={16} /> Confirmar agendamento</>
-            )}
+            <Check size={16} /> Confirmar agendamento
           </Button>
         </div>
       )}

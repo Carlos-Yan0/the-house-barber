@@ -19,20 +19,19 @@ import {
 import toast from "react-hot-toast";
 
 const PAYMENT_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] = [
-  { value: "PIX",         label: "PIX",     icon: "◈"  },
-  { value: "CASH",        label: "Dinheiro", icon: "💵" },
-  { value: "CREDIT_CARD", label: "Crédito",  icon: "💳" },
-  { value: "DEBIT_CARD",  label: "Débito",   icon: "💳" },
+  { value: "CASH",        label: "Dinheiro",  icon: "💵" },
+  { value: "PIX",         label: "PIX",       icon: "◈"  },
+  { value: "CREDIT_CARD", label: "Crédito",   icon: "💳" },
+  { value: "DEBIT_CARD",  label: "Débito",    icon: "💳" },
 ];
 
 export function BarberComandasPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"appointments" | "comandas">("appointments");
   const [closeModal, setCloseModal] = useState<string | null>(null);
-  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>("PIX");
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>("CASH");
   const [noShowId, setNoShowId] = useState<string | null>(null);
 
-  // Agendamentos de hoje
   const { data: aptData, isLoading: loadingApts } = useQuery({
     queryKey: ["barber-appointments-today"],
     queryFn: () =>
@@ -41,7 +40,6 @@ export function BarberComandasPage() {
         .then((r) => r.data),
   });
 
-  // Comandas abertas
   const { data: openComandas = [], isLoading: loadingComandas } = useQuery({
     queryKey: ["barber-comandas-open"],
     queryFn: () => comandasApi.list("OPEN").then((r) => r.data as Comanda[]),
@@ -72,7 +70,6 @@ export function BarberComandasPage() {
 
   const appointments: Appointment[] = aptData?.data ?? [];
 
-  // Mostra apenas agendamentos que ainda não foram concluídos/cancelados
   const activeAppointments = appointments.filter(
     (a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
   );
@@ -116,7 +113,6 @@ export function BarberComandasPage() {
             <EmptyState icon={<ClipboardList size={22} />} title="Nenhum atendimento hoje" />
           ) : (
             <div className="space-y-4">
-              {/* Pendentes — com ação */}
               {activeAppointments.length > 0 && (
                 <div className="space-y-3">
                   {activeAppointments
@@ -134,7 +130,6 @@ export function BarberComandasPage() {
                               {formatTime(apt.scheduledAt)} — {formatTime(apt.endsAt)}
                             </div>
                           </div>
-                          {/* Marcar como não compareceu */}
                           <button
                             onClick={() => setNoShowId(apt.id)}
                             className="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
@@ -143,7 +138,6 @@ export function BarberComandasPage() {
                           </button>
                         </div>
 
-                        {/* Fechar comanda direto */}
                         {apt.comanda && apt.comanda.status === "OPEN" && (
                           <div className="mt-3 pt-3 border-t border-dark-50">
                             <Button
@@ -161,7 +155,6 @@ export function BarberComandasPage() {
                 </div>
               )}
 
-              {/* Concluídos do dia */}
               {doneAppointments.length > 0 && (
                 <div>
                   <p className="section-label mb-2">Finalizados</p>
@@ -263,7 +256,9 @@ export function BarberComandasPage() {
         title="Fechar comanda"
         size="sm"
       >
-        <p className="section-label mb-3">Forma de pagamento</p>
+        <p className="text-xs text-[var(--text-muted)] mb-3">
+          Selecione como o cliente pagou na barbearia:
+        </p>
         <div className="grid grid-cols-2 gap-2 mb-5">
           {PAYMENT_OPTIONS.map((p) => (
             <button

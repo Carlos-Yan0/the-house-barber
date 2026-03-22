@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, addDays, startOfDay, isSameDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Calendar, Clock, DollarSign, TrendingUp, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import { appointmentsApi, barbersApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { StatsCard, Spinner, EmptyState } from "@/components/ui";
@@ -48,7 +48,6 @@ export function BarberDashboardPage() {
 
   const appointments: Appointment[] = appointmentsData?.data ?? [];
 
-  // Fluxo novo: só PENDING é "aguardando atendimento"
   const pending   = appointments.filter((a) => a.status === "PENDING");
   const completed = appointments.filter((a) => a.status === "COMPLETED");
 
@@ -175,11 +174,26 @@ export function BarberDashboardPage() {
                 </div>
 
                 {apt.service && (
-                  <div className="mt-3 pt-3 border-t border-dark-50 flex items-center justify-between">
+                  <div className="mt-3 pt-3 border-t border-dark-50 flex items-center justify-between gap-2">
                     <span className="text-xs text-[var(--text-muted)]">Valor do serviço</span>
-                    <span className="text-sm font-medium text-gold-400">
-                      {formatCurrency(apt.service.price)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {/* Badge de status do pagamento PIX */}
+                      {apt.comanda?.paymentMethod === "PIX" && (
+                        <span
+                          className={cn(
+                            "text-[10px] font-medium px-2 py-0.5 rounded-lg border",
+                            apt.comanda.paymentStatus === "PAID"
+                              ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                              : "text-yellow-400 bg-yellow-500/10 border-yellow-500/20 animate-pulse"
+                          )}
+                        >
+                          {apt.comanda.paymentStatus === "PAID" ? "✓ PIX Pago" : "◈ PIX Pendente"}
+                        </span>
+                      )}
+                      <span className="text-sm font-medium text-gold-400">
+                        {formatCurrency(apt.service.price)}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>

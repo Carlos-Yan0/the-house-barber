@@ -92,6 +92,7 @@ export interface Appointment {
     id: string;
     status: CommandStatus;
     paymentStatus: PaymentStatus;
+    paymentMethod?: PaymentMethod | null; // ← adicionado
   } | null;
 }
 
