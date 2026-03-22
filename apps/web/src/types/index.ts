@@ -2,6 +2,8 @@
 
 export type Role = "ADMIN" | "BARBER" | "CLIENT";
 
+// CONFIRMED e IN_PROGRESS mantidos no tipo para compatibilidade com registros
+// já existentes no banco, mas não são mais usados no fluxo novo.
 export type AppointmentStatus =
   | "PENDING"
   | "CONFIRMED"
@@ -143,41 +145,41 @@ export interface AvailabilityResponse {
 
 export interface DashboardStats {
   today: { appointments: number; openComandas: number };
-  month: { appointments: number; revenue: number };
-  totals: { clients: number; barbers: number; pendingCommissions: number };
+  month: { appointments: number; revenue: number; commissions: number };
+  totals: { clients: number };
 }
 
 export const STATUS_LABELS: Record<AppointmentStatus, string> = {
-  PENDING: "Pendente",
-  CONFIRMED: "Confirmado",
-  IN_PROGRESS: "Em andamento",
-  COMPLETED: "Concluído",
-  CANCELLED: "Cancelado",
-  NO_SHOW: "Não compareceu",
+  PENDING:     "Pendente",
+  CONFIRMED:   "Pendente",    // legado — exibe igual a Pendente
+  IN_PROGRESS: "Em andamento", // legado — mantido para registros antigos
+  COMPLETED:   "Concluído",
+  CANCELLED:   "Cancelado",
+  NO_SHOW:     "Não compareceu",
 };
 
 export const STATUS_CLASSES: Record<AppointmentStatus, string> = {
-  PENDING: "badge-pending",
-  CONFIRMED: "badge-confirmed",
-  IN_PROGRESS: "badge-progress",
-  COMPLETED: "badge-completed",
-  CANCELLED: "badge-cancelled",
-  NO_SHOW: "badge-noshow",
+  PENDING:     "badge-pending",
+  CONFIRMED:   "badge-pending",   // legado — mesmo visual de pendente
+  IN_PROGRESS: "badge-progress",  // legado
+  COMPLETED:   "badge-completed",
+  CANCELLED:   "badge-cancelled",
+  NO_SHOW:     "badge-noshow",
 };
 
 export const DAY_LABELS: Record<DayOfWeek, string> = {
-  MONDAY: "Segunda",
-  TUESDAY: "Terça",
+  MONDAY:    "Segunda",
+  TUESDAY:   "Terça",
   WEDNESDAY: "Quarta",
-  THURSDAY: "Quinta",
-  FRIDAY: "Sexta",
-  SATURDAY: "Sábado",
-  SUNDAY: "Domingo",
+  THURSDAY:  "Quinta",
+  FRIDAY:    "Sexta",
+  SATURDAY:  "Sábado",
+  SUNDAY:    "Domingo",
 };
 
 export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
-  PIX: "PIX",
-  CASH: "Dinheiro",
+  PIX:         "PIX",
+  CASH:        "Dinheiro",
   CREDIT_CARD: "Cartão de Crédito",
-  DEBIT_CARD: "Cartão de Débito",
+  DEBIT_CARD:  "Cartão de Débito",
 };

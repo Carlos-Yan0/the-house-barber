@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ClipboardList, CheckCircle, Clock, DollarSign } from "lucide-react";
 import { comandasApi, appointmentsApi } from "@/lib/api";
-import { Button, EmptyState, Spinner, Modal, Badge } from "@/components/ui";
+import { Button, EmptyState, Spinner, Modal } from "@/components/ui";
 import { formatCurrency, formatTime, cn } from "@/lib/utils";
 import {
   STATUS_LABELS,
@@ -18,22 +18,21 @@ import {
 } from "@/types";
 import toast from "react-hot-toast";
 
-const PAYMENT_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] =
-  [
-    { value: "PIX", label: "PIX", icon: "◈" },
-    { value: "CASH", label: "Dinheiro", icon: "💵" },
-    { value: "CREDIT_CARD", label: "Crédito", icon: "💳" },
-    { value: "DEBIT_CARD", label: "Débito", icon: "💳" },
-  ];
+const PAYMENT_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] = [
+  { value: "PIX",         label: "PIX",     icon: "◈"  },
+  { value: "CASH",        label: "Dinheiro", icon: "💵" },
+  { value: "CREDIT_CARD", label: "Crédito",  icon: "💳" },
+  { value: "DEBIT_CARD",  label: "Débito",   icon: "💳" },
+];
 
 export function BarberComandasPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"appointments" | "comandas">("appointments");
   const [closeModal, setCloseModal] = useState<string | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>("PIX");
-  const [statusModal, setStatusModal] = useState<Appointment | null>(null);
+  const [noShowId, setNoShowId] = useState<string | null>(null);
 
-  // Today's confirmed appointments
+  // Agendamentos de hoje
   const { data: aptData, isLoading: loadingApts } = useQuery({
     queryKey: ["barber-appointments-today"],
     queryFn: () =>
@@ -42,21 +41,18 @@ export function BarberComandasPage() {
         .then((r) => r.data),
   });
 
-  // Open comandas
+  // Comandas abertas
   const { data: openComandas = [], isLoading: loadingComandas } = useQuery({
     queryKey: ["barber-comandas-open"],
-    queryFn: () =>
-      comandasApi.list("OPEN").then((r) => r.data as Comanda[]),
+    queryFn: () => comandasApi.list("OPEN").then((r) => r.data as Comanda[]),
   });
 
-  const updateStatusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
-      appointmentsApi.updateStatus(id, status),
+  const noShowMutation = useMutation({
+    mutationFn: (id: string) => appointmentsApi.updateStatus(id, "NO_SHOW"),
     onSuccess: () => {
-      toast.success("Status atualizado!");
+      toast.success("Marcado como não compareceu");
       qc.invalidateQueries({ queryKey: ["barber-appointments-today"] });
-      qc.invalidateQueries({ queryKey: ["barber-comandas-open"] });
-      setStatusModal(null);
+      setNoShowId(null);
     },
     onError: (err: any) =>
       toast.error(err.response?.data?.error ?? "Erro ao atualizar"),
@@ -76,17 +72,13 @@ export function BarberComandasPage() {
 
   const appointments: Appointment[] = aptData?.data ?? [];
 
-  const NEXT_STATUS: Partial<Record<AppointmentStatus, string>> = {
-    PENDING: "CONFIRMED",
-    CONFIRMED: "IN_PROGRESS",
-    IN_PROGRESS: "COMPLETED",
-  };
-
-  const STATUS_ACTION_LABEL: Partial<Record<AppointmentStatus, string>> = {
-    PENDING: "Confirmar",
-    CONFIRMED: "Iniciar",
-    IN_PROGRESS: "Finalizar",
-  };
+  // Mostra apenas agendamentos que ainda não foram concluídos/cancelados
+  const activeAppointments = appointments.filter(
+    (a) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
+  );
+  const doneAppointments = appointments.filter(
+    (a) => ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(a.status)
+  );
 
   return (
     <div className="page-container animate-fade-in">
@@ -98,7 +90,7 @@ export function BarberComandasPage() {
       <div className="flex gap-1 bg-dark-300 rounded-xl p-1 mb-6">
         {[
           { key: "appointments", label: "Agenda Hoje" },
-          { key: "comandas", label: `Comandas (${openComandas.length})` },
+          { key: "comandas",     label: `Comandas (${openComandas.length})` },
         ].map((t) => (
           <button
             key={t.key}
@@ -115,90 +107,93 @@ export function BarberComandasPage() {
         ))}
       </div>
 
-      {/* Appointments Tab */}
+      {/* ── Aba Agenda ── */}
       {tab === "appointments" && (
         <>
           {loadingApts ? (
-            <div className="flex justify-center py-10">
-              <Spinner />
-            </div>
+            <div className="flex justify-center py-10"><Spinner /></div>
           ) : appointments.length === 0 ? (
-            <EmptyState
-              icon={<ClipboardList size={22} />}
-              title="Nenhum atendimento hoje"
-            />
+            <EmptyState icon={<ClipboardList size={22} />} title="Nenhum atendimento hoje" />
           ) : (
-            <div className="space-y-3">
-              {appointments
-                .sort(
-                  (a, b) =>
-                    new Date(a.scheduledAt).getTime() -
-                    new Date(b.scheduledAt).getTime()
-                )
-                .map((apt) => (
-                  <div key={apt.id} className="card-elevated p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+            <div className="space-y-4">
+              {/* Pendentes — com ação */}
+              {activeAppointments.length > 0 && (
+                <div className="space-y-3">
+                  {activeAppointments
+                    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+                    .map((apt) => (
+                      <div key={apt.id} className="card-elevated p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-white text-sm">{apt.client?.name}</p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              {apt.service?.name} · {formatCurrency(apt.service?.price ?? 0)}
+                            </p>
+                            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] mt-1">
+                              <Clock size={11} />
+                              {formatTime(apt.scheduledAt)} — {formatTime(apt.endsAt)}
+                            </div>
+                          </div>
+                          {/* Marcar como não compareceu */}
+                          <button
+                            onClick={() => setNoShowId(apt.id)}
+                            className="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
+                          >
+                            Faltou
+                          </button>
+                        </div>
+
+                        {/* Fechar comanda direto */}
+                        {apt.comanda && apt.comanda.status === "OPEN" && (
+                          <div className="mt-3 pt-3 border-t border-dark-50">
+                            <Button
+                              size="sm"
+                              className="w-full"
+                              icon={<DollarSign size={14} />}
+                              onClick={() => setCloseModal(apt.comanda!.id)}
+                            >
+                              Fechar comanda · {formatCurrency(apt.service?.price ?? 0)}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {/* Concluídos do dia */}
+              {doneAppointments.length > 0 && (
+                <div>
+                  <p className="section-label mb-2">Finalizados</p>
+                  <div className="space-y-2">
+                    {doneAppointments
+                      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+                      .map((apt) => (
+                        <div key={apt.id} className="card p-3 flex items-center justify-between gap-3 opacity-60">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-white font-medium truncate">{apt.client?.name}</p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              {apt.service?.name} · {formatTime(apt.scheduledAt)}
+                            </p>
+                          </div>
                           <span className={STATUS_CLASSES[apt.status]}>
                             {STATUS_LABELS[apt.status]}
                           </span>
                         </div>
-                        <p className="font-medium text-white text-sm">
-                          {apt.client?.name}
-                        </p>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          {apt.service?.name} ·{" "}
-                          {formatCurrency(apt.service?.price ?? 0)}
-                        </p>
-                        <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] mt-1">
-                          <Clock size={11} />
-                          {formatTime(apt.scheduledAt)} —{" "}
-                          {formatTime(apt.endsAt)}
-                        </div>
-                      </div>
-
-                      {NEXT_STATUS[apt.status] && (
-                        <Button
-                          size="sm"
-                          variant={
-                            apt.status === "IN_PROGRESS" ? "outline" : "gold"
-                          }
-                          onClick={() => setStatusModal(apt)}
-                        >
-                          {STATUS_ACTION_LABEL[apt.status]}
-                        </Button>
-                      )}
-                    </div>
-
-                    {/* Show "fechar comanda" when IN_PROGRESS has comanda */}
-                    {apt.comanda && apt.comanda.status === "OPEN" && (
-                      <div className="mt-3 pt-3 border-t border-dark-50">
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          icon={<DollarSign size={14} />}
-                          onClick={() => setCloseModal(apt.comanda!.id)}
-                        >
-                          Fechar comanda ·{" "}
-                          {formatCurrency(apt.service?.price ?? 0)}
-                        </Button>
-                      </div>
-                    )}
+                      ))}
                   </div>
-                ))}
+                </div>
+              )}
             </div>
           )}
         </>
       )}
 
-      {/* Comandas Tab */}
+      {/* ── Aba Comandas ── */}
       {tab === "comandas" && (
         <>
           {loadingComandas ? (
-            <div className="flex justify-center py-10">
-              <Spinner />
-            </div>
+            <div className="flex justify-center py-10"><Spinner /></div>
           ) : openComandas.length === 0 ? (
             <EmptyState
               icon={<CheckCircle size={22} />}
@@ -236,85 +231,63 @@ export function BarberComandasPage() {
         </>
       )}
 
-      {/* Status update modal */}
+      {/* Modal: no-show */}
       <Modal
-        isOpen={!!statusModal}
-        onClose={() => setStatusModal(null)}
-        title="Atualizar status"
+        isOpen={!!noShowId}
+        onClose={() => setNoShowId(null)}
+        title="Cliente não compareceu?"
         size="sm"
       >
-        {statusModal && (
-          <div>
-            <p className="text-sm text-[var(--text-secondary)] mb-5">
-              Deseja mudar o status de{" "}
-              <strong className="text-white">
-                {STATUS_LABELS[statusModal.status]}
-              </strong>{" "}
-              para{" "}
-              <strong className="text-gold-400">
-                {STATUS_LABELS[NEXT_STATUS[statusModal.status] as AppointmentStatus]}
-              </strong>
-              ?
-            </p>
-            <div className="flex gap-3">
-              <Button
-                variant="ghost"
-                className="flex-1"
-                onClick={() => setStatusModal(null)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                className="flex-1"
-                loading={updateStatusMutation.isPending}
-                onClick={() =>
-                  updateStatusMutation.mutate({
-                    id: statusModal.id,
-                    status: NEXT_STATUS[statusModal.status]!,
-                  })
-                }
-              >
-                Confirmar
-              </Button>
-            </div>
-          </div>
-        )}
+        <p className="text-sm text-[var(--text-secondary)] mb-5">
+          Isso vai marcar o agendamento como <strong className="text-white">não compareceu</strong> e liberar o horário.
+        </p>
+        <div className="flex gap-3">
+          <Button variant="ghost" className="flex-1" onClick={() => setNoShowId(null)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            className="flex-1"
+            loading={noShowMutation.isPending}
+            onClick={() => noShowId && noShowMutation.mutate(noShowId)}
+          >
+            Confirmar
+          </Button>
+        </div>
       </Modal>
 
-      {/* Close comanda modal */}
+      {/* Modal: fechar comanda */}
       <Modal
         isOpen={!!closeModal}
         onClose={() => setCloseModal(null)}
         title="Fechar comanda"
         size="sm"
       >
-        <div>
-          <p className="section-label mb-3">Forma de pagamento</p>
-          <div className="grid grid-cols-2 gap-2 mb-5">
-            {PAYMENT_OPTIONS.map((p) => (
-              <button
-                key={p.value}
-                onClick={() => setSelectedPayment(p.value)}
-                className={cn(
-                  "p-3 rounded-xl border text-sm font-medium transition-all flex items-center gap-2",
-                  selectedPayment === p.value
-                    ? "bg-gold-600/15 border-gold-600/40 text-gold-400"
-                    : "bg-dark-300 border-dark-50 text-[var(--text-secondary)] hover:border-gold-600/20"
-                )}
-              >
-                <span>{p.icon}</span>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <Button
-            className="w-full"
-            loading={closeMutation.isPending}
-            onClick={() => closeMutation.mutate()}
-          >
-            Confirmar pagamento
-          </Button>
+        <p className="section-label mb-3">Forma de pagamento</p>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {PAYMENT_OPTIONS.map((p) => (
+            <button
+              key={p.value}
+              onClick={() => setSelectedPayment(p.value)}
+              className={cn(
+                "p-3 rounded-xl border text-sm font-medium transition-all flex items-center gap-2",
+                selectedPayment === p.value
+                  ? "bg-gold-600/15 border-gold-600/40 text-gold-400"
+                  : "bg-dark-300 border-dark-50 text-[var(--text-secondary)] hover:border-gold-600/20"
+              )}
+            >
+              <span>{p.icon}</span>
+              {p.label}
+            </button>
+          ))}
         </div>
+        <Button
+          className="w-full"
+          loading={closeMutation.isPending}
+          onClick={() => closeMutation.mutate()}
+        >
+          Confirmar pagamento
+        </Button>
       </Modal>
     </div>
   );

@@ -168,7 +168,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
 
       const endsAt = addMinutes(startTime, service.duration);
 
-      // Re-verificar disponibilidade do slot antes de criar
       const localDateStr = format(
         new Date(startTime.toLocaleString("en-US", { timeZone: TIMEZONE })),
         "yyyy-MM-dd"
@@ -189,7 +188,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Horário não disponível" };
       }
 
-      // ── Criar agendamento ─────────────────────────────────────────────────
       const appointment = await prisma.appointment.create({
         data: {
           clientId:       user.id,
@@ -211,7 +209,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
 
       set.status = 201;
 
-      // ── Pagamento em dinheiro ─────────────────────────────────────────────
       if (paymentMethod === "CASH") {
         await prisma.comanda.create({
           data: {
@@ -222,11 +219,9 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
             paymentStatus: "PENDING",
           },
         });
-
         return { appointment, paymentMethod: "CASH", pix: null };
       }
 
-      // ── Pagamento PIX ─────────────────────────────────────────────────────
       try {
         const clientName = appointment.client.name.trim();
         const nameParts  = clientName.split(" ");
@@ -266,7 +261,6 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
           },
         };
       } catch (err: any) {
-        // PIX falhou — cancela agendamento e retorna erro claro
         await prisma.appointment.delete({ where: { id: appointment.id } });
         console.error("[PIX] Erro ao criar pagamento:", err.message);
         set.status = 502;
@@ -287,6 +281,8 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
   )
 
   // ── PATCH /appointments/:id/status ────────────────────────────────────────
+  // Fluxo simplificado: PENDING → CANCELLED | NO_SHOW
+  // COMPLETED é gerado automaticamente ao fechar a comanda.
   .patch(
     "/:id/status",
     async ({ headers, params, body, set }) => {
@@ -317,37 +313,30 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Acesso negado" };
       }
 
+      // Transições permitidas
+      // PENDING → CANCELLED (cliente, barbeiro, admin)
+      // PENDING → NO_SHOW   (barbeiro, admin)
       const allowed: Record<string, string[]> = {
-        PENDING:     ["CONFIRMED", "CANCELLED"],
-        CONFIRMED:   ["IN_PROGRESS", "CANCELLED", "NO_SHOW"],
-        IN_PROGRESS: ["COMPLETED"],
+        PENDING: ["CANCELLED", "NO_SHOW"],
       };
 
       if (!allowed[appointment.status]?.includes(status)) {
         set.status = 422;
-        return { error: `Transição inválida: ${appointment.status} → ${status}` };
+        return {
+          error: `Transição inválida: ${appointment.status} → ${status}`,
+        };
+      }
+
+      // NO_SHOW só pode ser marcado pelo barbeiro ou admin
+      if (status === "NO_SHOW" && !isBarber && !isAdmin) {
+        set.status = 403;
+        return { error: "Apenas o barbeiro pode marcar como não compareceu" };
       }
 
       const updated = await prisma.appointment.update({
         where: { id: params.id },
         data: { status: status as any, cancelReason },
       });
-
-      if (status === "IN_PROGRESS") {
-        const service = await prisma.service.findUnique({
-          where: { id: appointment.serviceId },
-        });
-        await prisma.comanda.upsert({
-          where: { appointmentId: params.id },
-          create: {
-            appointmentId: params.id,
-            totalAmount:   service!.price,
-            status:        "OPEN",
-            paymentStatus: "PENDING",
-          },
-          update: {},
-        });
-      }
 
       return updated;
     },
@@ -380,9 +369,9 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Acesso negado" };
       }
 
-      if (!["PENDING", "CONFIRMED"].includes(appointment.status)) {
+      if (appointment.status !== "PENDING") {
         set.status = 422;
-        return { error: "Somente agendamentos pendentes ou confirmados podem ser cancelados" };
+        return { error: "Somente agendamentos pendentes podem ser cancelados" };
       }
 
       await prisma.appointment.update({
