@@ -1,22 +1,21 @@
 // src/pages/RegisterPage.tsx
-import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { authApi } from "@/lib/api";
-import { useAuthStore } from "@/store/authStore";
 import { Logo } from "@/components/ui/Logo";
 import { Input, Button } from "@/components/ui";
+import { onlyDigits } from "@/lib/inputHandlers";
 import toast from "react-hot-toast";
 
 const schema = z
   .object({
-    name: z.string().min(2, "Nome muito curto"),
-    email: z.string().email("E-mail inválido"),
-    phone: z.string().optional(),
-    password: z.string().min(8, "Mínimo 8 caracteres"),
-    confirmPassword: z.string(),
+    name:            z.string().min(2, "Nome muito curto").max(100, "Nome muito longo").trim(),
+    email:           z.string().email("E-mail inválido").trim(),
+    phone:           z.string().max(20, "Telefone inválido").optional().or(z.literal("")),
+    password:        z.string().min(8, "Mínimo 8 caracteres").max(128, "Senha muito longa"),
+    confirmPassword: z.string().min(1, "Confirme a senha"),
   })
   .refine((d) => d.password === d.confirmPassword, {
     message: "As senhas não coincidem",
@@ -26,7 +25,6 @@ const schema = z
 type FormData = z.infer<typeof schema>;
 
 export function RegisterPage() {
-  const { setAuth } = useAuthStore();
   const navigate = useNavigate();
 
   const {
@@ -37,15 +35,12 @@ export function RegisterPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await authApi.register({
-        name: data.name,
-        email: data.email,
-        phone: data.phone || undefined,
+      await authApi.register({
+        name:     data.name,
+        email:    data.email.toLowerCase(),
+        phone:    data.phone || undefined,
         password: data.password,
       });
-      const { user, token } = res.data;
-
-      // Register returns token but not refreshToken; redirect to login
       toast.success("Conta criada! Faça login para continuar.");
       navigate("/login");
     } catch (err: any) {
@@ -64,16 +59,13 @@ export function RegisterPage() {
           </h1>
           <p className="text-[var(--text-secondary)] text-sm">
             Já tem uma conta?{" "}
-            <Link
-              to="/login"
-              className="text-gold-400 hover:text-gold-300 font-medium transition-colors"
-            >
+            <Link to="/login" className="text-gold-400 hover:text-gold-300 font-medium transition-colors">
               Fazer login
             </Link>
           </p>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
           <Input
             label="Nome completo"
             placeholder="João da Silva"
@@ -91,11 +83,14 @@ export function RegisterPage() {
             {...register("email")}
           />
 
+          {/* Telefone — só dígitos, teclado numérico no mobile */}
           <Input
             label="WhatsApp (opcional)"
-            type="tel"
+            type="text"
+            inputMode="numeric"
             placeholder="47999999999"
             autoComplete="tel"
+            onKeyDown={onlyDigits}
             error={errors.phone?.message}
             {...register("phone")}
           />
@@ -105,8 +100,8 @@ export function RegisterPage() {
             type="password"
             placeholder="Mínimo 8 caracteres"
             autoComplete="new-password"
-            error={errors.password?.message}
             hint="Use pelo menos 8 caracteres"
+            error={errors.password?.message}
             {...register("password")}
           />
 
@@ -119,12 +114,7 @@ export function RegisterPage() {
             {...register("confirmPassword")}
           />
 
-          <Button
-            type="submit"
-            size="lg"
-            loading={isSubmitting}
-            className="w-full mt-2"
-          >
+          <Button type="submit" size="lg" loading={isSubmitting} className="w-full mt-2">
             Criar conta
           </Button>
         </form>

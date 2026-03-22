@@ -1,65 +1,83 @@
 // src/pages/admin/AdminBarbersPage.tsx
 import { useState } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, UserCheck, Percent, Edit2, PowerOff, Power } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { Button, EmptyState, Spinner, Modal, Input, Badge } from "@/components/ui";
-
+import { onlyDigits } from "../../lib/Inputhandlers";
 import type { User } from "@/types";
 import toast from "react-hot-toast";
+import { cn } from "@/lib/utils";
 
-const EMPTY_FORM = { name: "", email: "", password: "", phone: "", commissionRate: 50 };
+// ── Schemas ───────────────────────────────────────────────────────────────────
+const createSchema = z.object({
+  name:           z.string().min(2, "Nome muito curto").max(100, "Nome muito longo").trim(),
+  email:          z.string().email("E-mail inválido").trim(),
+  password:       z.string().min(8, "Mínimo 8 caracteres").max(128, "Senha muito longa"),
+  phone:          z.string().max(20, "Telefone inválido").optional().or(z.literal("")),
+  commissionRate: z.number().min(20, "Mínimo 20%").max(80, "Máximo 80%"),
+});
 
-interface EditForm {
-  name: string;
-  email: string;
-  phone: string;
-  commissionRate: number;
-}
+const editSchema = z.object({
+  name:           z.string().min(2, "Nome muito curto").max(100).trim(),
+  email:          z.string().email("E-mail inválido").trim(),
+  phone:          z.string().max(20, "Telefone inválido").optional().or(z.literal("")),
+  commissionRate: z.number().min(20, "Mínimo 20%").max(80, "Máximo 80%"),
+});
+
+type CreateForm = z.infer<typeof createSchema>;
+type EditForm   = z.infer<typeof editSchema>;
 
 export function AdminBarbersPage() {
   const qc = useQueryClient();
 
-  // ── Modal criar ───────────────────────────────────────────────────────────
   const [createModal, setCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState(EMPTY_FORM);
-
-  // ── Modal editar ──────────────────────────────────────────────────────────
-  const [editModal, setEditModal] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({
-    name: "", email: "", phone: "", commissionRate: 50,
-  });
-
-  // ── Modal confirmar inativação ────────────────────────────────────────────
+  const [editModal,   setEditModal]   = useState(false);
+  const [editingId,   setEditingId]   = useState<string | null>(null);
   const [toggleModal, setToggleModal] = useState(false);
   const [toggleTarget, setToggleTarget] = useState<{ id: string; name: string; isActive: boolean } | null>(null);
+
+  const createForm = useForm<CreateForm>({
+    resolver: zodResolver(createSchema),
+    defaultValues: { name: "", email: "", password: "", phone: "", commissionRate: 50 },
+  });
+
+  const editForm = useForm<EditForm>({
+    resolver: zodResolver(editSchema),
+    defaultValues: { name: "", email: "", phone: "", commissionRate: 50 },
+  });
 
   const { data: barbers = [], isLoading } = useQuery({
     queryKey: ["admin-barbers"],
     queryFn: () => adminApi.listUsers("BARBER").then((r) => r.data as User[]),
   });
 
-  // ── Mutações ──────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: () =>
-      adminApi.createBarber({ ...createForm, commissionRate: createForm.commissionRate / 100 }),
+    mutationFn: (data: CreateForm) =>
+      adminApi.createBarber({
+        ...data,
+        phone: data.phone || undefined,
+        commissionRate: data.commissionRate / 100,
+      }),
     onSuccess: () => {
       toast.success("Barbeiro criado!");
       qc.invalidateQueries({ queryKey: ["admin-barbers"] });
       setCreateModal(false);
-      setCreateForm(EMPTY_FORM);
+      createForm.reset();
     },
     onError: (err: any) => toast.error(err.response?.data?.error ?? "Erro ao criar"),
   });
 
   const editMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (data: EditForm) =>
       adminApi.updateBarber(editingId!, {
-        name:           editForm.name   || undefined,
-        email:          editForm.email  || undefined,
-        phone:          editForm.phone  || undefined,
-        commissionRate: editForm.commissionRate / 100,
+        name:  data.name,
+        email: data.email,
+        phone: data.phone || undefined,
+        commissionRate: data.commissionRate / 100,
       }),
     onSuccess: () => {
       toast.success("Barbeiro atualizado!");
@@ -72,9 +90,8 @@ export function AdminBarbersPage() {
 
   const toggleMutation = useMutation({
     mutationFn: (id: string) => adminApi.toggleUserActive(id),
-    onSuccess: (_, id) => {
-      const wasActive = toggleTarget?.isActive;
-      toast.success(wasActive ? "Barbeiro inativado" : "Barbeiro reativado");
+    onSuccess: () => {
+      toast.success(toggleTarget?.isActive ? "Barbeiro inativado" : "Barbeiro reativado");
       qc.invalidateQueries({ queryKey: ["admin-barbers"] });
       setToggleModal(false);
       setToggleTarget(null);
@@ -82,10 +99,9 @@ export function AdminBarbersPage() {
     onError: (err: any) => toast.error(err.response?.data?.error ?? "Erro ao atualizar status"),
   });
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   const openEdit = (barber: any) => {
     setEditingId(barber.id);
-    setEditForm({
+    editForm.reset({
       name:           barber.name,
       email:          barber.email,
       phone:          barber.phone ?? "",
@@ -98,6 +114,44 @@ export function AdminBarbersPage() {
     setToggleTarget({ id: barber.id, name: barber.name, isActive: barber.isActive });
     setToggleModal(true);
   };
+
+  // Reutilizável: campo de telefone com inputMode e onlyDigits
+  const PhoneField = ({ form }: { form: any }) => (
+    <Input
+      label="WhatsApp (opcional)"
+      type="text"
+      inputMode="numeric"
+      placeholder="47999999999"
+      onKeyDown={onlyDigits}
+      error={form.formState.errors.phone?.message}
+      {...form.register("phone")}
+    />
+  );
+
+  // Reutilizável: slider de comissão
+  const CommissionSlider = ({ form }: { form: any }) => (
+    <Controller
+      control={form.control}
+      name="commissionRate"
+      render={({ field, fieldState }) => (
+        <div>
+          <label className="section-label block mb-1.5">
+            Taxa de comissão: {field.value}%
+          </label>
+          <input
+            type="range" min={20} max={80} step={5}
+            value={field.value}
+            onChange={(e) => field.onChange(Number(e.target.value))}
+            className="w-full accent-gold-500"
+          />
+          <div className="flex justify-between text-xs text-[var(--text-muted)] mt-1">
+            <span>20%</span><span>80%</span>
+          </div>
+          {fieldState.error && <p className="text-xs text-red-400 mt-1">{fieldState.error.message}</p>}
+        </div>
+      )}
+    />
+  );
 
   return (
     <div className="page-container animate-fade-in">
@@ -124,7 +178,6 @@ export function AdminBarbersPage() {
           {(barbers as any[]).map((barber) => (
             <div key={barber.id} className={`card-elevated p-4 transition-all ${!barber.isActive && "opacity-50"}`}>
               <div className="flex items-start justify-between gap-3">
-                {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-white text-sm">{barber.name}</p>
@@ -138,27 +191,16 @@ export function AdminBarbersPage() {
                     </div>
                   )}
                 </div>
-
-                {/* Ações — mesmo padrão da tela de serviços */}
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => openEdit(barber)}
-                    className="p-2 rounded-lg text-[var(--text-muted)] hover:text-white hover:bg-dark-50/60 transition-all"
-                  >
+                  <button onClick={() => openEdit(barber)} className="p-2 rounded-lg text-[var(--text-muted)] hover:text-white hover:bg-dark-50/60 transition-all">
                     <Edit2 size={15} />
                   </button>
                   {barber.isActive ? (
-                    <button
-                      onClick={() => openToggle(barber)}
-                      className="p-2 rounded-lg text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 transition-all"
-                    >
+                    <button onClick={() => openToggle(barber)} className="p-2 rounded-lg text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 transition-all">
                       <PowerOff size={15} />
                     </button>
                   ) : (
-                    <button
-                      onClick={() => openToggle(barber)}
-                      className="p-2 rounded-lg text-[var(--text-muted)] hover:text-emerald-400 hover:bg-emerald-500/10 transition-all"
-                    >
+                    <button onClick={() => openToggle(barber)} className="p-2 rounded-lg text-[var(--text-muted)] hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
                       <Power size={15} />
                     </button>
                   )}
@@ -169,114 +211,64 @@ export function AdminBarbersPage() {
         </div>
       )}
 
-      {/* ── Modal: criar barbeiro ── */}
-      <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Novo barbeiro">
-        <div className="space-y-4">
+      {/* ── Modal: criar ── */}
+      <Modal isOpen={createModal} onClose={() => { setCreateModal(false); createForm.reset(); }} title="Novo barbeiro">
+        <form onSubmit={createForm.handleSubmit((d) => createMutation.mutate(d))} className="space-y-4" noValidate>
           <Input
             label="Nome completo"
-            value={createForm.name}
-            onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
             placeholder="Nome do barbeiro"
+            error={createForm.formState.errors.name?.message}
+            {...createForm.register("name")}
           />
           <Input
             label="E-mail"
             type="email"
-            value={createForm.email}
-            onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
             placeholder="barbeiro@email.com"
+            error={createForm.formState.errors.email?.message}
+            {...createForm.register("email")}
           />
           <Input
             label="Senha inicial"
             type="password"
-            value={createForm.password}
-            onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
             placeholder="Mínimo 8 caracteres"
+            error={createForm.formState.errors.password?.message}
+            {...createForm.register("password")}
           />
-          <Input
-            label="WhatsApp (opcional)"
-            value={createForm.phone}
-            onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })}
-            placeholder="47999999999"
-          />
-          <div>
-            <label className="section-label block mb-1.5">
-              Taxa de comissão: {createForm.commissionRate}%
-            </label>
-            <input
-              type="range" min={20} max={80} step={5}
-              value={createForm.commissionRate}
-              onChange={(e) => setCreateForm({ ...createForm, commissionRate: Number(e.target.value) })}
-              className="w-full accent-gold-500"
-            />
-            <div className="flex justify-between text-xs text-[var(--text-muted)] mt-1">
-              <span>20%</span><span>80%</span>
-            </div>
-          </div>
+          <PhoneField form={createForm} />
+          <CommissionSlider form={createForm} />
           <div className="flex gap-3 pt-2">
-            <Button variant="ghost" className="flex-1" onClick={() => setCreateModal(false)}>Cancelar</Button>
-            <Button
-              className="flex-1"
-              loading={createMutation.isPending}
-              onClick={() => createMutation.mutate()}
-              disabled={!createForm.name || !createForm.email || createForm.password.length < 8}
-            >
-              Criar barbeiro
-            </Button>
+            <Button variant="ghost" className="flex-1" type="button" onClick={() => { setCreateModal(false); createForm.reset(); }}>Cancelar</Button>
+            <Button className="flex-1" loading={createMutation.isPending} type="submit">Criar barbeiro</Button>
           </div>
-        </div>
+        </form>
       </Modal>
 
-      {/* ── Modal: editar barbeiro ── */}
-      <Modal isOpen={editModal} onClose={() => setEditModal(false)} title="Editar barbeiro">
-        <div className="space-y-4">
+      {/* ── Modal: editar ── */}
+      <Modal isOpen={editModal} onClose={() => { setEditModal(false); setEditingId(null); }} title="Editar barbeiro">
+        <form onSubmit={editForm.handleSubmit((d) => editMutation.mutate(d))} className="space-y-4" noValidate>
           <Input
             label="Nome completo"
-            value={editForm.name}
-            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
             placeholder="Nome do barbeiro"
+            error={editForm.formState.errors.name?.message}
+            {...editForm.register("name")}
           />
           <Input
             label="E-mail"
             type="email"
-            value={editForm.email}
-            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             placeholder="barbeiro@email.com"
+            error={editForm.formState.errors.email?.message}
+            {...editForm.register("email")}
           />
-          <Input
-            label="WhatsApp"
-            value={editForm.phone}
-            onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-            placeholder="47999999999"
-          />
-          <div>
-            <label className="section-label block mb-1.5">
-              Taxa de comissão: {editForm.commissionRate}%
-            </label>
-            <input
-              type="range" min={20} max={80} step={5}
-              value={editForm.commissionRate}
-              onChange={(e) => setEditForm({ ...editForm, commissionRate: Number(e.target.value) })}
-              className="w-full accent-gold-500"
-            />
-            <div className="flex justify-between text-xs text-[var(--text-muted)] mt-1">
-              <span>20%</span><span>80%</span>
-            </div>
-          </div>
+          <PhoneField form={editForm} />
+          <CommissionSlider form={editForm} />
           <div className="flex gap-3 pt-2">
-            <Button variant="ghost" className="flex-1" onClick={() => setEditModal(false)}>Cancelar</Button>
-            <Button
-              className="flex-1"
-              loading={editMutation.isPending}
-              onClick={() => editMutation.mutate()}
-              disabled={!editForm.name || !editForm.email}
-            >
-              Salvar alterações
-            </Button>
+            <Button variant="ghost" className="flex-1" type="button" onClick={() => setEditModal(false)}>Cancelar</Button>
+            <Button className="flex-1" loading={editMutation.isPending} type="submit">Salvar alterações</Button>
           </div>
-        </div>
+        </form>
       </Modal>
 
-      {/* ── Modal: confirmar toggle ativo/inativo ── */}
+      {/* ── Modal: toggle ── */}
       <Modal
         isOpen={toggleModal}
         onClose={() => setToggleModal(false)}
@@ -290,9 +282,7 @@ export function AdminBarbersPage() {
           }
         </p>
         <div className="flex gap-3">
-          <Button variant="ghost" className="flex-1" onClick={() => setToggleModal(false)}>
-            Cancelar
-          </Button>
+          <Button variant="ghost" className="flex-1" onClick={() => setToggleModal(false)}>Cancelar</Button>
           <Button
             variant={toggleTarget?.isActive ? "danger" : "gold"}
             className="flex-1"

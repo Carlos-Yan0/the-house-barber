@@ -1,9 +1,26 @@
 // src/routes/admin.ts
 import Elysia, { t } from "elysia";
+import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader, invalidateUserCache } from "../lib/getUser";
 import { startOfMonth, endOfMonth, startOfDay, endOfDay } from "date-fns";
+
+// ── Shared schemas ────────────────────────────────────────────────────────────
+const createBarberSchema = z.object({
+  name:           z.string().min(2).max(100).trim(),
+  email:          z.string().email().toLowerCase().trim(),
+  password:       z.string().min(8).max(128),
+  phone:          z.string().max(20).optional(),
+  commissionRate: z.number().min(0.1).max(0.9).default(0.5),
+});
+
+const updateBarberSchema = z.object({
+  name:           z.string().min(2).max(100).trim().optional(),
+  email:          z.string().email().toLowerCase().trim().optional(),
+  phone:          z.string().max(20).optional(),
+  commissionRate: z.number().min(0.1).max(0.9).optional(),
+});
 
 async function requireAdmin(authHeader: string | undefined, set: any) {
   const auth = await getUserFromHeader(authHeader);
@@ -14,6 +31,7 @@ async function requireAdmin(authHeader: string | undefined, set: any) {
 
 export const adminRoutes = new Elysia({ prefix: "/admin" })
 
+  // ── GET /admin/dashboard ──────────────────────────────────────────────────
   .get("/dashboard", async ({ headers, query, set }) => {
     const user = await requireAdmin(headers.authorization, set);
     if ("error" in (user as any)) return user;
@@ -23,12 +41,8 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     const monthEnd   = endOfMonth(date);
 
     const [
-      todayAppointments,
-      monthAppointments,
-      openComandas,
-      monthRevenue,
-      totalClients,
-      monthCommissions,
+      todayAppointments, monthAppointments,
+      openComandas, monthRevenue, totalClients, monthCommissions,
     ] = await Promise.all([
       prisma.appointment.count({
         where: { scheduledAt: { gte: startOfDay(date), lte: endOfDay(date) } },
@@ -38,21 +52,12 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
       }),
       prisma.comanda.count({ where: { status: "OPEN" } }),
       prisma.comanda.aggregate({
-        where: {
-          status: "CLOSED",
-          paymentStatus: "PAID",
-          closedAt: { gte: monthStart, lte: monthEnd },
-        },
+        where: { status: "CLOSED", paymentStatus: "PAID", closedAt: { gte: monthStart, lte: monthEnd } },
         _sum: { totalAmount: true },
       }),
       prisma.user.count({ where: { role: "CLIENT", isActive: true } }),
       prisma.commission.aggregate({
-        where: {
-          comanda: {
-            status: "CLOSED",
-            closedAt: { gte: monthStart, lte: monthEnd },
-          },
-        },
+        where: { comanda: { status: "CLOSED", closedAt: { gte: monthStart, lte: monthEnd } } },
         _sum: { commissionAmount: true },
       }),
     ]);
@@ -68,6 +73,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     };
   }, { query: t.Object({ date: t.Optional(t.String()) }) })
 
+  // ── GET /admin/reports/revenue ────────────────────────────────────────────
   .get("/reports/revenue", async ({ headers, query, set }) => {
     const user = await requireAdmin(headers.authorization, set);
     if ("error" in (user as any)) return user;
@@ -114,12 +120,13 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   // ── POST /admin/barbers — criar barbeiro ──────────────────────────────────
   .post("/barbers", async ({ headers, body, set }) => {
-    const user = await requireAdmin(headers.authorization, set);
-    if ("error" in (user as any)) return user;
+    const admin = await requireAdmin(headers.authorization, set);
+    if ("error" in (admin as any)) return admin;
 
-    const { name, email, password, phone, commissionRate } = body as {
-      name: string; email: string; password: string; phone?: string; commissionRate?: number;
-    };
+    const parsed = createBarberSchema.safeParse(body);
+    if (!parsed.success) { set.status = 422; return { error: parsed.error.flatten() }; }
+
+    const { name, email, password, phone, commissionRate } = parsed.data;
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) { set.status = 409; return { error: "E-mail já cadastrado" }; }
@@ -128,7 +135,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     const newUser = await prisma.user.create({
       data: {
         name, email, phone, passwordHash, role: "BARBER",
-        barberProfile: { create: { commissionRate: commissionRate ?? 0.5 } },
+        barberProfile: { create: { commissionRate } },
       },
       include: { barberProfile: true },
     });
@@ -147,46 +154,49 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     const admin = await requireAdmin(headers.authorization, set);
     if ("error" in (admin as any)) return admin;
 
-    const { name, email, phone, commissionRate } = body as {
-      name?: string; email?: string; phone?: string; commissionRate?: number;
-    };
+    const parsed = updateBarberSchema.safeParse(body);
+    if (!parsed.success) { set.status = 422; return { error: parsed.error.flatten() }; }
 
-    // Verifica se o usuário existe e é barbeiro
+    const { name, email, phone, commissionRate } = parsed.data;
+
     const target = await prisma.user.findUnique({
       where: { id: params.id, role: "BARBER" },
       include: { barberProfile: true },
     });
     if (!target) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
 
-    // Se está mudando o e-mail, garante unicidade
     if (email && email !== target.email) {
       const conflict = await prisma.user.findUnique({ where: { email } });
       if (conflict) { set.status = 409; return { error: "E-mail já cadastrado" }; }
     }
 
-    // Atualiza user + barberProfile numa transação
-    const [updatedUser] = await prisma.$transaction([
-      prisma.user.update({
-        where: { id: params.id },
-        data: {
-          ...(name  !== undefined && { name }),
-          ...(email !== undefined && { email }),
-          ...(phone !== undefined && { phone }),
-        },
-        include: { barberProfile: true },
-      }),
-      ...(commissionRate !== undefined && target.barberProfile
-        ? [prisma.barberProfile.update({
-            where: { id: target.barberProfile.id },
-            data: { commissionRate },
-          })]
-        : []),
-    ]);
+    // FIX: avoid spread of conditional operations into $transaction array
+    // (TypeScript can't infer the tuple type correctly with spread).
+    // Instead, run the two operations separately when both are needed.
+    const updatedUser = await prisma.user.update({
+      where: { id: params.id },
+      data: {
+        ...(name  !== undefined && { name }),
+        ...(email !== undefined && { email }),
+        ...(phone !== undefined && { phone }),
+      },
+      include: { barberProfile: true },
+    });
 
-    // Invalida cache de autenticação pois o nome pode ter mudado
+    if (commissionRate !== undefined && target.barberProfile) {
+      await prisma.barberProfile.update({
+        where: { id: target.barberProfile.id },
+        data: { commissionRate },
+      });
+    }
+
     invalidateUserCache(params.id);
 
-    return updatedUser;
+    // Re-fetch with updated barberProfile
+    return prisma.user.findUnique({
+      where: { id: params.id },
+      include: { barberProfile: true },
+    });
   }, {
     body: t.Object({
       name:           t.Optional(t.String()),
@@ -196,7 +206,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     }),
   })
 
-  // ── PATCH /admin/users/:id/toggle-active — ativar / inativar usuário ──────
+  // ── PATCH /admin/users/:id/toggle-active ──────────────────────────────────
   .patch("/users/:id/toggle-active", async ({ headers, params, set }) => {
     const admin = await requireAdmin(headers.authorization, set);
     if ("error" in (admin as any)) return admin;
@@ -204,7 +214,6 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     const target = await prisma.user.findUnique({ where: { id: params.id } });
     if (!target) { set.status = 404; return { error: "Usuário não encontrado" }; }
 
-    // Impede que o admin se inative
     if (target.id === (admin as any).id) {
       set.status = 422;
       return { error: "Você não pode inativar sua própria conta" };
@@ -216,9 +225,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
       select: { id: true, name: true, isActive: true, role: true },
     });
 
-    // Remove cache para que o usuário seja barrado na próxima requisição
     invalidateUserCache(params.id);
-
     return updated;
   })
 
@@ -227,8 +234,13 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     const user = await requireAdmin(headers.authorization, set);
     if ("error" in (user as any)) return user;
 
+    const allowedRoles = ["ADMIN", "BARBER", "CLIENT"];
+    const roleFilter = query.role && allowedRoles.includes(query.role as string)
+      ? { role: query.role as any }
+      : undefined;
+
     return prisma.user.findMany({
-      where: query.role ? { role: query.role as any } : undefined,
+      where: roleFilter,
       select: {
         id: true, name: true, email: true, phone: true, role: true,
         isActive: true, createdAt: true,
@@ -245,6 +257,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
     const commission = await prisma.commission.findUnique({ where: { id: params.id } });
     if (!commission) { set.status = 404; return { error: "Comissão não encontrada" }; }
+    if (commission.isPaid) { set.status = 409; return { error: "Comissão já foi paga" }; }
 
     return prisma.commission.update({
       where: { id: params.id },
