@@ -38,7 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/barbeiro/dashboard", icon: <LayoutDashboard size={20} />, label: "Dashboard",    shortLabel: "Dashboard", roles: ["BARBER"] },
   { to: "/barbeiro/agenda",    icon: <Calendar size={20} />,        label: "Minha Agenda", shortLabel: "Agenda",    roles: ["BARBER", "ADMIN"] },
   { to: "/barbeiro/comandas",  icon: <ClipboardList size={20} />,   label: "Comandas",     shortLabel: "Comandas",  roles: ["BARBER", "ADMIN"] },
-  { to: "/barbeiro/ganhos",    icon: <TrendingUp size={20} />,      label: "Ganhos",       shortLabel: "Ganhos",    roles: ["BARBER", "ADMIN"] },
+  { to: "/barbeiro/ganhos",    icon: <TrendingUp size={20} />,      label: "Ganhos",       shortLabel: "Ganhos",    roles: ["BARBER"] },
 
   // Admin
   { to: "/admin/dashboard",  icon: <LayoutDashboard size={20} />, label: "Dashboard",  shortLabel: "Dashboard", roles: ["ADMIN"] },
