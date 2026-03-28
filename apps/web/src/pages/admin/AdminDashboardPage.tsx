@@ -8,7 +8,7 @@ import { adminApi, appointmentsApi, comandasApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { StatsCard, Spinner, EmptyState, Modal, Button } from "@/components/ui";
 import { formatCurrency, formatTime, cn } from "@/lib/utils";
-import { STATUS_CLASSES, STATUS_LABELS, type Appointment, type PaymentMethod } from "@/types";
+import { type Appointment, type PaymentMethod } from "@/types";
 import toast from "react-hot-toast";
 
 // ── Date-strip constants ──────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ function computeColumns(appointments: Appointment[]): Map<string, { colIndex: nu
     (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
   );
 
-  const lanes: number[] = []; // ms end time por lane
+  const lanes: number[] = [];
   const aptLane = new Map<string, number>();
 
   for (const apt of sorted) {
@@ -164,20 +164,17 @@ function AppointmentTimeline({
             )}
             style={{ top, height, left: leftStyle, width: widthStyle }}
           >
-            {/* Linha 1: horário + cliente */}
             <p className="text-xs font-semibold text-white leading-tight truncate">
               {formatTime(apt.scheduledAt)} · {formatTime(apt.endsAt)}
               {apt.client?.name ? ` — ${apt.client.name}` : ""}
             </p>
 
-            {/* Linha 2: serviço */}
             {apt.service && durationMin >= 20 && (
               <p className="text-[11px] text-blue-100/80 mt-0.5 truncate leading-tight">
                 {apt.service.name}
               </p>
             )}
 
-            {/* Linha 3: barbeiro */}
             {apt.barberProfile?.user?.name && durationMin >= 20 && (
               <p className="text-[10px] text-blue-100/70 mt-0.5 leading-tight flex items-center gap-1 truncate">
                 <User size={9} className="shrink-0" />
@@ -194,7 +191,7 @@ function AppointmentTimeline({
                   : isCompleted
                   ? `✓ Concluído${apt.service ? ` · ${formatCurrency(apt.service.price)}` : ""}`
                   : hasOpenComanda
-                  ? "Toque para fechar comanda →"
+                  ? "Toque para gerenciar →"
                   : "Sem comanda aberta"}
               </p>
             )}
@@ -249,6 +246,20 @@ export function AdminDashboardPage() {
       toast.error(err.response?.data?.error ?? "Erro ao fechar comanda"),
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: () => appointmentsApi.cancel(closeApt!.id),
+    onSuccess: () => {
+      toast.success("Agendamento cancelado.");
+      qc.invalidateQueries({ queryKey: ["admin-appointments-day", selectedDateStr] });
+      qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
+      qc.invalidateQueries({ queryKey: ["barber-comandas-open"] });
+      setCloseModal(null);
+      setCloseApt(null);
+    },
+    onError: (err: any) =>
+      toast.error(err.response?.data?.error ?? "Erro ao cancelar"),
+  });
+
   const handleBlockClick = (apt: Appointment) => {
     if (!apt.comanda?.id) return;
     setCloseApt(apt);
@@ -258,7 +269,6 @@ export function AdminDashboardPage() {
 
   const allAppointments: Appointment[] = dayData?.data ?? [];
 
-  // Por padrão mostra só os do barbeiro logado; com showAll mostra todos
   const filteredAppointments = showAll
     ? allAppointments
     : allAppointments.filter((a) => !barberId || a.barberProfileId === barberId);
@@ -310,7 +320,6 @@ export function AdminDashboardPage() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-display font-semibold text-white">Agenda</h2>
           <div className="flex items-center gap-2">
-            {/* Toggle: meus / todos */}
             <button
               onClick={() => setShowAll((v) => !v)}
               className={cn(
@@ -405,11 +414,11 @@ export function AdminDashboardPage() {
         </div>
       )}
 
-      {/* Modal: fechar comanda */}
+      {/* Modal: gerenciar agendamento */}
       <Modal
         isOpen={!!closeModal}
         onClose={() => { setCloseModal(null); setCloseApt(null); }}
-        title="Fechar comanda"
+        title="Gerenciar agendamento"
         size="sm"
       >
         {closeApt && (
@@ -454,9 +463,29 @@ export function AdminDashboardPage() {
           className="w-full"
           icon={<DollarSign size={14} />}
           loading={closeMutation.isPending}
+          disabled={cancelMutation.isPending}
           onClick={() => closeMutation.mutate()}
         >
           Confirmar pagamento
+        </Button>
+
+        <div className="relative my-3">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-dark-50" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-dark-300 px-2 text-[10px] text-[var(--text-muted)]">ou</span>
+          </div>
+        </div>
+
+        <Button
+          variant="danger"
+          className="w-full"
+          loading={cancelMutation.isPending}
+          disabled={closeMutation.isPending}
+          onClick={() => cancelMutation.mutate()}
+        >
+          Cancelar agendamento
         </Button>
       </Modal>
     </div>

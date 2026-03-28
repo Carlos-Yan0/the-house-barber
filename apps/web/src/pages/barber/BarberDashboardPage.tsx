@@ -130,19 +130,16 @@ function AppointmentTimeline({
               right: 0,
             }}
           >
-            {/* Linha 1: horário */}
             <p className="text-xs font-semibold text-white leading-tight truncate">
               {formatTime(apt.scheduledAt)} · {formatTime(apt.endsAt)}
             </p>
 
-            {/* Linha 2: serviço */}
             {apt.service && durationMin >= 20 && (
               <p className="text-[11px] text-blue-100/80 mt-0.5 truncate leading-tight">
                 {apt.service.name}
               </p>
             )}
 
-            {/* Linha 3: cliente */}
             {apt.client?.name && durationMin >= 20 && (
               <p className="text-[10px] text-blue-100/70 mt-0.5 leading-tight flex items-center gap-1 truncate">
                 <User size={9} className="shrink-0" />
@@ -150,7 +147,6 @@ function AppointmentTimeline({
               </p>
             )}
 
-            {/* Linha 4: CTA ou status */}
             {durationMin >= 30 && (
               <p className="text-[10px] text-blue-200/60 mt-0.5 leading-tight">
                 {isCancelled
@@ -160,7 +156,7 @@ function AppointmentTimeline({
                   : isCompleted
                   ? `✓ Concluído${apt.service ? ` · ${formatCurrency(apt.service.price)}` : ""}`
                   : hasOpenComanda
-                  ? "Toque para fechar comanda →"
+                  ? "Toque para gerenciar →"
                   : "Sem comanda aberta"}
               </p>
             )}
@@ -180,8 +176,7 @@ export function BarberDashboardPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(startOfDay(new Date()));
   const [windowStart, setWindowStart] = useState(Math.max(0, PAST_DAYS - 1));
 
-  // Estado do modal de fechar comanda
-  const [closeModal, setCloseModal] = useState<string | null>(null); // comandaId
+  const [closeModal, setCloseModal] = useState<string | null>(null);
   const [closeApt, setCloseApt] = useState<Appointment | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>("CASH");
 
@@ -221,6 +216,20 @@ export function BarberDashboardPage() {
       toast.error(err.response?.data?.error ?? "Erro ao fechar comanda"),
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: () => appointmentsApi.cancel(closeApt!.id),
+    onSuccess: () => {
+      toast.success("Agendamento cancelado.");
+      qc.invalidateQueries({ queryKey: ["barber-appointments", selectedDateStr] });
+      qc.invalidateQueries({ queryKey: ["barber-appointments-today"] });
+      qc.invalidateQueries({ queryKey: ["barber-comandas-open"] });
+      setCloseModal(null);
+      setCloseApt(null);
+    },
+    onError: (err: any) =>
+      toast.error(err.response?.data?.error ?? "Erro ao cancelar"),
+  });
+
   const handleBlockClick = (apt: Appointment) => {
     if (!apt.comanda?.id) return;
     setCloseApt(apt);
@@ -228,8 +237,6 @@ export function BarberDashboardPage() {
     setSelectedPayment("CASH");
   };
 
-  // Filtra pelos agendamentos do próprio barbeiro — necessário quando o usuário
-  // também é ADMIN, pois nesse caso o backend não aplica filtro por barbeiro.
   const appointments: Appointment[] = (appointmentsData?.data ?? []).filter(
     (a) => !barberId || a.barberProfileId === barberId
   );
@@ -249,7 +256,6 @@ export function BarberDashboardPage() {
 
   return (
     <div className="page-container animate-fade-in">
-      {/* Cabeçalho */}
       <div className="mb-6">
         <p className="section-label mb-1">
           {format(new Date(), "EEEE, dd 'de' MMMM", { locale: ptBR })}
@@ -259,7 +265,6 @@ export function BarberDashboardPage() {
         </h1>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <StatsCard
           label={`Agendamentos — ${dateLabel}`}
@@ -273,7 +278,6 @@ export function BarberDashboardPage() {
         />
       </div>
 
-      {/* Seletor de data */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-display font-semibold text-white">Agenda</h2>
@@ -327,7 +331,6 @@ export function BarberDashboardPage() {
         </div>
       </div>
 
-      {/* Timeline */}
       <p className="section-label mb-3">
         {dateLabel} —{" "}
         {loadingAppointments
@@ -360,11 +363,11 @@ export function BarberDashboardPage() {
         </div>
       )}
 
-      {/* Modal: fechar comanda — mesmo fluxo do BarberComandasPage */}
+      {/* Modal: gerenciar agendamento */}
       <Modal
         isOpen={!!closeModal}
         onClose={() => { setCloseModal(null); setCloseApt(null); }}
-        title="Fechar comanda"
+        title="Gerenciar agendamento"
         size="sm"
       >
         {closeApt && (
@@ -406,9 +409,29 @@ export function BarberDashboardPage() {
           className="w-full"
           icon={<DollarSign size={14} />}
           loading={closeMutation.isPending}
+          disabled={cancelMutation.isPending}
           onClick={() => closeMutation.mutate()}
         >
           Confirmar pagamento
+        </Button>
+
+        <div className="relative my-3">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-dark-50" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-dark-300 px-2 text-[10px] text-[var(--text-muted)]">ou</span>
+          </div>
+        </div>
+
+        <Button
+          variant="danger"
+          className="w-full"
+          loading={cancelMutation.isPending}
+          disabled={closeMutation.isPending}
+          onClick={() => cancelMutation.mutate()}
+        >
+          Cancelar agendamento
         </Button>
       </Modal>
     </div>
