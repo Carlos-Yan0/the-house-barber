@@ -17,6 +17,8 @@ type AvailabilitySocketHandlers = {
   onErrorMessage?: (message: string) => void;
 };
 
+const SOCKET_CONNECT_TIMEOUT_MS = 2000;
+
 function getAvailabilitySocketUrl(query: AvailabilitySocketQuery): string {
   const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3333";
   const wsBaseUrl = baseUrl.startsWith("https://")
@@ -49,16 +51,41 @@ export function connectAvailabilitySocket(
 ): () => void {
   let didFallback = false;
   let closedByClient = false;
+  let hasReceivedPayload = false;
+  let didOpen = false;
+  let socket: WebSocket | null = null;
+
+  const connectTimer = window.setTimeout(() => {
+    if (!hasReceivedPayload && !didOpen) fallback();
+  }, SOCKET_CONNECT_TIMEOUT_MS);
+
+  const clearConnectTimer = () => {
+    window.clearTimeout(connectTimer);
+  };
 
   const fallback = () => {
     if (didFallback) return;
     didFallback = true;
+    clearConnectTimer();
+
+    if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
+      closedByClient = true;
+      socket.close();
+    }
+
     handlers.onSocketUnavailable();
   };
 
-  const socket = new WebSocket(getAvailabilitySocketUrl(query));
+  socket = new WebSocket(getAvailabilitySocketUrl(query));
+
+  socket.onopen = () => {
+    didOpen = true;
+    clearConnectTimer();
+  };
 
   socket.onmessage = (event) => {
+    if (didFallback || closedByClient) return;
+
     let payload: AvailabilitySocketMessage | null = null;
     if (typeof event.data !== "string") return;
 
@@ -71,6 +98,8 @@ export function connectAvailabilitySocket(
     if (!payload || typeof payload !== "object" || !("type" in payload)) return;
 
     if (payload.type === "availability") {
+      hasReceivedPayload = true;
+      clearConnectTimer();
       handlers.onAvailability({
         slots: payload.slots,
         date: payload.date,
@@ -97,6 +126,7 @@ export function connectAvailabilitySocket(
 
   return () => {
     closedByClient = true;
+    clearConnectTimer();
     socket.close();
   };
 }

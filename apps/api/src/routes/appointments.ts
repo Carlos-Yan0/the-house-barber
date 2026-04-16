@@ -8,10 +8,12 @@ import { getAvailableSlots } from "../services/availability.service";
 import { createPixPayment } from "../services/mercadopago.service";
 import { addMinutes, format } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
+import { publicRouteCache } from "../lib/ttlCache";
 
 const TIMEZONE = "America/Sao_Paulo";
 const APPOINTMENT_OVERLAP_CONSTRAINT = "appointments_no_overlap_active";
 const APPOINTMENT_INTERVAL_CONSTRAINT = "appointments_valid_interval_chk";
+const ACTIVE_SERVICE_CACHE_TTL_MS = 60_000;
 
 type AvailabilityQuery = {
   barberId: string;
@@ -46,6 +48,30 @@ type AvailabilitySubscription = {
 
 const availabilitySubscriptions = new Map<string, AvailabilitySubscription>();
 
+async function getActiveServiceSnapshot(serviceId: string) {
+  return publicRouteCache.getOrSet(
+    `services:active:${serviceId}`,
+    ACTIVE_SERVICE_CACHE_TTL_MS,
+    async () => {
+      const service = await prisma.service.findUnique({
+        where: { id: serviceId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          duration: true,
+          price: true,
+        },
+      });
+
+      if (!service) {
+        throw new Error("__SERVICE_NOT_FOUND__");
+      }
+
+      return service;
+    }
+  );
+}
+
 function isValidDateInput(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -76,9 +102,9 @@ async function buildAvailabilitySnapshot(query: AvailabilityQuery): Promise<Avai
     return { type: "error", status: 400, error: "date deve estar no formato yyyy-MM-dd" };
   }
 
-  const service = await prisma.service.findUnique({
-    where: { id: serviceId, isActive: true },
-    select: { duration: true },
+  const service = await getActiveServiceSnapshot(serviceId).catch((error: Error) => {
+    if (error.message === "__SERVICE_NOT_FOUND__") return null;
+    throw error;
   });
 
   if (!service) {
@@ -167,8 +193,9 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "date deve estar no formato yyyy-MM-dd" };
       }
 
-      const service = await prisma.service.findUnique({
-        where: { id: serviceId as string, isActive: true },
+      const service = await getActiveServiceSnapshot(serviceId as string).catch((error: Error) => {
+        if (error.message === "__SERVICE_NOT_FOUND__") return null;
+        throw error;
       });
       if (!service) {
         set.status = 404;
@@ -318,8 +345,9 @@ export const appointmentRoutes = new Elysia({ prefix: "/appointments" })
         return { error: "Barbeiro não encontrado ou indisponível" };
       }
 
-      const service = await prisma.service.findUnique({
-        where: { id: serviceId, isActive: true },
+      const service = await getActiveServiceSnapshot(serviceId).catch((error: Error) => {
+        if (error.message === "__SERVICE_NOT_FOUND__") return null;
+        throw error;
       });
       if (!service) {
         set.status = 404;

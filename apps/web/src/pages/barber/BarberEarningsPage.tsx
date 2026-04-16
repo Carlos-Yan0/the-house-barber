@@ -100,7 +100,7 @@ export function BarberEarningsPage() {
         />
       ) : (
         <div className="space-y-2">
-          {commissions.map((c: any) => (
+          {commissions.map((c) => (
             <div key={c.id} className="card-elevated p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>

@@ -3,6 +3,7 @@ import axios, { type AxiosInstance } from "axios";
 import { useAuthStore } from "@/store/authStore";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3333";
+let refreshRequest: Promise<string> | null = null;
 
 export const api: AxiosInstance = axios.create({
   baseURL: BASE_URL,
@@ -31,9 +32,18 @@ api.interceptors.response.use(
       if (!refreshToken) { logout(); return Promise.reject(error); }
 
       try {
-        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken });
-        setTokens(data.token, refreshToken);
-        original.headers.Authorization = `Bearer ${data.token}`;
+        if (!refreshRequest) {
+          refreshRequest = axios
+            .post(`${BASE_URL}/auth/refresh`, { refreshToken })
+            .then(({ data }) => data.token as string)
+            .finally(() => {
+              refreshRequest = null;
+            });
+        }
+
+        const nextToken = await refreshRequest;
+        setTokens(nextToken, refreshToken);
+        original.headers.Authorization = `Bearer ${nextToken}`;
         return api(original);
       } catch {
         logout();

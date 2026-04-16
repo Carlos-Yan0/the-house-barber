@@ -81,6 +81,9 @@ async function verifyJWT(
 export interface AuthUser {
   id: string;
   name: string;
+  email: string;
+  phone?: string | null;
+  avatarUrl?: string | null;
   role: string;
   barberProfile?: {
     id: string;
@@ -122,6 +125,9 @@ export async function getUserFromHeader(
     select: {
       id: true,
       name: true,
+      email: true,
+      phone: true,
+      avatarUrl: true,
       role: true,
       barberProfile: {
         select: {
@@ -139,13 +145,16 @@ export async function getUserFromHeader(
     : { user: null, error: "Usuário não encontrado", status: 401 };
 
   // Cache successful lookups only. TTL is capped at the token's remaining
-  // lifetime so we never return a cached result after the JWT has expired.
-  if (result.user && payload.exp) {
-    const jwtExpiresAt = payload.exp * 1000;
+  // lifetime when exp exists; otherwise we still use the short in-memory TTL.
+  if (result.user) {
     const ttlBasedExpiry = Date.now() + CACHE_TTL_MS;
+    const expiresAt = payload.exp
+      ? Math.min(payload.exp * 1000, ttlBasedExpiry)
+      : ttlBasedExpiry;
+
     _cache.set(token, {
       result,
-      expiresAt: Math.min(jwtExpiresAt, ttlBasedExpiry),
+      expiresAt,
     });
   }
 

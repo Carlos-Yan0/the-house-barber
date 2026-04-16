@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { jwt } from "@elysiajs/jwt";
 import { prisma } from "../lib/prisma";
+import { getUserFromHeader, type AuthUser } from "../lib/getUser";
 import { sendPasswordResetEmail } from "../services/email.service";
 import { checkRateLimit, LIMITS } from "../lib/Ratelimit";
 
@@ -35,6 +36,27 @@ function getIp(headers: Record<string, string | undefined>): string {
   return (headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
     ?? headers["x-real-ip"]
     ?? "unknown";
+}
+
+function toAuthResponseUser(
+  user: Pick<AuthUser, "id" | "name" | "email" | "phone" | "avatarUrl" | "role" | "barberProfile">
+) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone ?? null,
+    avatarUrl: user.avatarUrl ?? null,
+    role: user.role,
+    barberProfileId: user.barberProfile?.id ?? null,
+    barberProfile: user.barberProfile
+      ? {
+          id: user.barberProfile.id,
+          commissionRate: user.barberProfile.commissionRate,
+          isAvailable: user.barberProfile.isAvailable,
+        }
+      : null,
+  };
 }
 
 export const authRoutes = new Elysia({ prefix: "/auth" })
@@ -84,7 +106,23 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
 
     const user = await prisma.user.findUnique({
       where: { email, isActive: true },
-      include: { barberProfile: { select: { id: true, isAvailable: true } } },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        avatarUrl: true,
+        role: true,
+        passwordHash: true,
+        barberProfile: {
+          select: {
+            id: true,
+            userId: true,
+            commissionRate: true,
+            isAvailable: true,
+          },
+        },
+      },
     });
 
     // Constant-time comparison even when user not found → prevents timing attacks
@@ -102,14 +140,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
 
     return {
       token, refreshToken,
-      user: {
-        id: user.id, name: user.name, email: user.email,
-        role: user.role, phone: user.phone,
-        barberProfileId: user.barberProfile?.id ?? null,
-        barberProfile: user.barberProfile
-          ? { id: user.barberProfile.id, isAvailable: user.barberProfile.isAvailable }
-          : null,
-      },
+      user: toAuthResponseUser(user),
     };
   }, {
     body: t.Object({ email: t.String(), password: t.String() }),
@@ -127,7 +158,18 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     if (!payload) { set.status = 401; return { error: "Refresh token inválido" }; }
 
     const stored = await prisma.refreshToken.findUnique({
-      where: { token: refreshToken }, include: { user: true },
+      where: { token: refreshToken },
+      select: {
+        expiresAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            role: true,
+            isActive: true,
+          },
+        },
+      },
     });
     if (!stored || stored.expiresAt < new Date() || !stored.user.isActive) {
       set.status = 401; return { error: "Refresh token expirado ou inválido" };
@@ -151,22 +193,14 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   })
 
   // ── GET /auth/me ──────────────────────────────────────────────────────────
-  .get("/me", async ({ headers, jwt, set }) => {
-    const authHeader = headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) { set.status = 401; return { error: "Token não fornecido" }; }
+  .get("/me", async ({ headers, set }) => {
+    const auth = await getUserFromHeader(headers.authorization);
+    if (!auth.user) {
+      set.status = auth.status;
+      return { error: auth.error };
+    }
 
-    const payload = await jwt.verify(authHeader.slice(7));
-    if (!payload) { set.status = 401; return { error: "Token inválido" }; }
-
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub as string },
-      select: {
-        id: true, name: true, email: true, phone: true, role: true, avatarUrl: true,
-        barberProfile: { select: { id: true, commissionRate: true, isAvailable: true } },
-      },
-    });
-    if (!user) { set.status = 404; return { error: "Usuário não encontrado" }; }
-    return user;
+    return toAuthResponseUser(auth.user);
   }, { detail: { tags: ["Auth"], summary: "Obter dados do usuário autenticado" } })
 
   // ── POST /auth/forgot-password ────────────────────────────────────────────

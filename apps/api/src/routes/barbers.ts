@@ -3,6 +3,9 @@ import Elysia, { t } from "elysia";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader } from "../lib/getUser";
+import { publicRouteCache } from "../lib/ttlCache";
+
+const PUBLIC_BARBERS_CACHE_TTL_MS = 60_000;
 
 function isInvalidScheduleError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2004") {
@@ -25,216 +28,369 @@ function isInvalidScheduleError(error: unknown): boolean {
   return false;
 }
 
-export const barberRoutes = new Elysia({ prefix: "/barbers" })
+function invalidatePublicBarberCache() {
+  publicRouteCache.deleteByPrefix("barbers:");
+}
 
-  // GET /barbers — public
-  .get("/", async () => {
-    return prisma.barberProfile.findMany({
-      where: { isAvailable: true, user: { isActive: true } },
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true } },
-        schedules: { where: { isActive: true }, orderBy: { dayOfWeek: "asc" } },
-      },
-    });
+export const barberRoutes = new Elysia({ prefix: "/barbers" })
+  .get("/", async ({ set }) => {
+    set.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120";
+
+    return publicRouteCache.getOrSet("barbers:list:public", PUBLIC_BARBERS_CACHE_TTL_MS, () =>
+      prisma.barberProfile.findMany({
+        where: { isAvailable: true, user: { isActive: true } },
+        select: {
+          id: true,
+          userId: true,
+          bio: true,
+          commissionRate: true,
+          isAvailable: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+          schedules: {
+            where: { isActive: true },
+            orderBy: { dayOfWeek: "asc" },
+            select: {
+              id: true,
+              barberProfileId: true,
+              dayOfWeek: true,
+              startTime: true,
+              endTime: true,
+              slotDuration: true,
+              isActive: true,
+            },
+          },
+        },
+      })
+    );
   })
 
-  // GET /barbers/:id — public
   .get("/:id", async ({ params, set }) => {
-    const barber = await prisma.barberProfile.findUnique({
-      where: { id: params.id },
-      include: {
-        user: { select: { id: true, name: true, avatarUrl: true, email: true } },
-        schedules: { where: { isActive: true } },
-      },
+    const cacheKey = `barbers:detail:${params.id}`;
+    set.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120";
+
+    const barber = await publicRouteCache.getOrSet(cacheKey, PUBLIC_BARBERS_CACHE_TTL_MS, async () => {
+      const found = await prisma.barberProfile.findUnique({
+        where: { id: params.id },
+        select: {
+          id: true,
+          userId: true,
+          bio: true,
+          commissionRate: true,
+          isAvailable: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              avatarUrl: true,
+              email: true,
+            },
+          },
+          schedules: {
+            where: { isActive: true },
+            orderBy: { dayOfWeek: "asc" },
+            select: {
+              id: true,
+              barberProfileId: true,
+              dayOfWeek: true,
+              startTime: true,
+              endTime: true,
+              slotDuration: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+      if (!found) {
+        throw new Error("__BARBER_NOT_FOUND__");
+      }
+
+      return found;
+    }).catch((error: Error) => {
+      if (error.message === "__BARBER_NOT_FOUND__") return null;
+      throw error;
     });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
+
+    if (!barber) {
+      set.status = 404;
+      return { error: "Barbeiro não encontrado" };
+    }
+
     return barber;
   })
 
-  // GET /barbers/:id/schedule — protected
   .get("/:id/schedule", async ({ headers, params, set }) => {
     const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
+    if (!auth.user) {
+      set.status = auth.status;
+      return { error: auth.error };
+    }
 
     const barber = await prisma.barberProfile.findUnique({
       where: { id: params.id },
-      include: { schedules: true, blockedDates: true },
+      select: {
+        id: true,
+        userId: true,
+        schedules: true,
+        blockedDates: true,
+      },
     });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
+    if (!barber) {
+      set.status = 404;
+      return { error: "Barbeiro não encontrado" };
+    }
 
     if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
+      set.status = 403;
+      return { error: "Acesso negado" };
     }
     return barber;
   })
 
-  // PUT /barbers/:id/schedule — protected
-  .put("/:id/schedule", async ({ headers, params, body, set }) => {
-    const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
-
-    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
-    if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
-    }
-
-    const { schedules } = body as { schedules: any[] };
-    try {
-      return await Promise.all(
-        schedules.map((s) =>
-          prisma.barberSchedule.upsert({
-            where: { barberProfileId_dayOfWeek: { barberProfileId: params.id, dayOfWeek: s.dayOfWeek } },
-            create: { barberProfileId: params.id, ...s },
-            update: { startTime: s.startTime, endTime: s.endTime, slotDuration: s.slotDuration, isActive: s.isActive },
-          })
-        )
-      );
-    } catch (error) {
-      if (isInvalidScheduleError(error)) {
-        set.status = 422;
-        return { error: "Horários inválidos. Use HH:mm e garanta startTime < endTime." };
+  .put(
+    "/:id/schedule",
+    async ({ headers, params, body, set }) => {
+      const auth = await getUserFromHeader(headers.authorization);
+      if (!auth.user) {
+        set.status = auth.status;
+        return { error: auth.error };
       }
-      throw error;
+
+      const barber = await prisma.barberProfile.findUnique({
+        where: { id: params.id },
+        select: { id: true, userId: true },
+      });
+      if (!barber) {
+        set.status = 404;
+        return { error: "Barbeiro não encontrado" };
+      }
+      if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
+        set.status = 403;
+        return { error: "Acesso negado" };
+      }
+
+      const { schedules } = body as { schedules: Array<Record<string, unknown>> };
+      try {
+        const result = await Promise.all(
+          schedules.map((s) =>
+            prisma.barberSchedule.upsert({
+              where: {
+                barberProfileId_dayOfWeek: {
+                  barberProfileId: params.id,
+                  dayOfWeek: s.dayOfWeek as never,
+                },
+              },
+              create: { barberProfileId: params.id, ...s } as never,
+              update: {
+                startTime: s.startTime as string,
+                endTime: s.endTime as string,
+                slotDuration: s.slotDuration as number,
+                isActive: s.isActive as boolean,
+              },
+            })
+          )
+        );
+
+        invalidatePublicBarberCache();
+        return result;
+      } catch (error) {
+        if (isInvalidScheduleError(error)) {
+          set.status = 422;
+          return { error: "Horários inválidos. Use HH:mm e garanta startTime < endTime." };
+        }
+        throw error;
+      }
+    },
+    {
+      body: t.Object({
+        schedules: t.Array(
+          t.Object({
+            dayOfWeek: t.String(),
+            startTime: t.String(),
+            endTime: t.String(),
+            slotDuration: t.Number(),
+            isActive: t.Boolean(),
+          })
+        ),
+      }),
     }
-  }, {
-    body: t.Object({
-      schedules: t.Array(t.Object({
-        dayOfWeek: t.String(), startTime: t.String(), endTime: t.String(),
-        slotDuration: t.Number(), isActive: t.Boolean(),
-      })),
-    }),
-  })
+  )
 
-  // POST /barbers/:id/blocked-dates — protected
-  .post("/:id/blocked-dates", async ({ headers, params, body, set }) => {
-    const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
+  .post(
+    "/:id/blocked-dates",
+    async ({ headers, params, body, set }) => {
+      const auth = await getUserFromHeader(headers.authorization);
+      if (!auth.user) {
+        set.status = auth.status;
+        return { error: auth.error };
+      }
 
-    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
-    if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
+      const barber = await prisma.barberProfile.findUnique({
+        where: { id: params.id },
+        select: { id: true, userId: true },
+      });
+      if (!barber) {
+        set.status = 404;
+        return { error: "Barbeiro não encontrado" };
+      }
+      if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
+        set.status = 403;
+        return { error: "Acesso negado" };
+      }
+
+      const { date, reason } = body as { date: string; reason?: string };
+      const blocked = await prisma.barberBlockedDate.upsert({
+        where: {
+          barberProfileId_date: {
+            barberProfileId: params.id,
+            date: new Date(date),
+          },
+        },
+        create: { barberProfileId: params.id, date: new Date(date), reason },
+        update: { reason },
+      });
+
+      invalidatePublicBarberCache();
+      set.status = 201;
+      return blocked;
+    },
+    {
+      body: t.Object({ date: t.String(), reason: t.Optional(t.String()) }),
     }
+  )
 
-    const { date, reason } = body as { date: string; reason?: string };
-    const blocked = await prisma.barberBlockedDate.upsert({
-      where: { barberProfileId_date: { barberProfileId: params.id, date: new Date(date) } },
-      create: { barberProfileId: params.id, date: new Date(date), reason },
-      update: { reason },
-    });
-    set.status = 201;
-    return blocked;
-  }, {
-    body: t.Object({ date: t.String(), reason: t.Optional(t.String()) }),
-  })
-
-  // DELETE /barbers/:id/blocked-dates/:dateId — protected
   .delete("/:id/blocked-dates/:dateId", async ({ headers, params, set }) => {
     const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
+    if (!auth.user) {
+      set.status = auth.status;
+      return { error: auth.error };
+    }
 
-    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
+    const barber = await prisma.barberProfile.findUnique({
+      where: { id: params.id },
+      select: { id: true, userId: true },
+    });
+    if (!barber) {
+      set.status = 404;
+      return { error: "Barbeiro não encontrado" };
+    }
     if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
+      set.status = 403;
+      return { error: "Acesso negado" };
     }
 
     await prisma.barberBlockedDate.delete({ where: { id: params.dateId } });
+    invalidatePublicBarberCache();
     return { message: "Data desbloqueada com sucesso" };
   })
 
-  // PATCH /barbers/:id/availability — protected
-  // Permite ao próprio barbeiro (ou admin) ativar/desativar disponibilidade
-  // sem afetar o role ou conta do usuário.
-  .patch("/:id/availability", async ({ headers, params, body, set }) => {
-    const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
+  .patch(
+    "/:id/availability",
+    async ({ headers, params, body, set }) => {
+      const auth = await getUserFromHeader(headers.authorization);
+      if (!auth.user) {
+        set.status = auth.status;
+        return { error: auth.error };
+      }
 
-    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
+      const barber = await prisma.barberProfile.findUnique({
+        where: { id: params.id },
+        select: { id: true, userId: true },
+      });
+      if (!barber) {
+        set.status = 404;
+        return { error: "Barbeiro não encontrado" };
+      }
 
-    if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
+      if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
+        set.status = 403;
+        return { error: "Acesso negado" };
+      }
+
+      const { isAvailable } = body as { isAvailable: boolean };
+
+      const updated = await prisma.barberProfile.update({
+        where: { id: params.id },
+        data: { isAvailable },
+      });
+
+      invalidatePublicBarberCache();
+      return updated;
+    },
+    {
+      body: t.Object({ isAvailable: t.Boolean() }),
     }
+  )
 
-    const { isAvailable } = body as { isAvailable: boolean };
+  .get(
+    "/:id/earnings",
+    async ({ headers, params, query, set }) => {
+      const auth = await getUserFromHeader(headers.authorization);
+      if (!auth.user) {
+        set.status = auth.status;
+        return { error: auth.error };
+      }
 
-    const updated = await prisma.barberProfile.update({
-      where: { id: params.id },
-      data: { isAvailable },
-    });
+      const barber = await prisma.barberProfile.findUnique({
+        where: { id: params.id },
+        select: { id: true, userId: true },
+      });
+      if (!barber) {
+        set.status = 404;
+        return { error: "Barbeiro não encontrado" };
+      }
+      if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
+        set.status = 403;
+        return { error: "Acesso negado" };
+      }
 
-    return updated;
-  }, {
-    body: t.Object({ isAvailable: t.Boolean() }),
-  })
+      const where: Record<string, unknown> = { barberProfileId: params.id };
+      if (query.startDate || query.endDate) {
+        where.createdAt = {};
+        if (query.startDate) (where.createdAt as Record<string, unknown>).gte = new Date(query.startDate as string);
+        if (query.endDate) (where.createdAt as Record<string, unknown>).lte = new Date(query.endDate as string);
+      }
 
-  // GET /barbers/:id/earnings — protected
-  .get("/:id/earnings", async ({ headers, params, query, set }) => {
-    const auth = await getUserFromHeader(headers.authorization);
-    if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
-
-    const barber = await prisma.barberProfile.findUnique({ where: { id: params.id } });
-    if (!barber) { set.status = 404; return { error: "Barbeiro não encontrado" }; }
-    if (auth.user.role !== "ADMIN" && barber.userId !== auth.user.id) {
-      set.status = 403; return { error: "Acesso negado" };
-    }
-
-    const where: any = { barberProfileId: params.id };
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate as string);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate as string);
-    }
-
-    const commissions = await prisma.commission.findMany({
-      where,
-      select: {
-        id: true,
-        grossAmount: true,
-        commissionRate: true,
-        commissionAmount: true,
-        isPaid: true,
-        paidAt: true,
-        createdAt: true,
-        comanda: {
-          select: { id: true, appointmentId: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    const appointmentIds = commissions
-      .map((c) => c.comanda?.appointmentId)
-      .filter(Boolean) as string[];
-
-    const appointments = appointmentIds.length
-      ? await prisma.appointment.findMany({
-          where: { id: { in: appointmentIds } },
-          select: {
-            id: true,
-            service: { select: { name: true } },
-            client: { select: { name: true } },
+      const commissions = await prisma.commission.findMany({
+        where,
+        select: {
+          id: true,
+          barberProfileId: true,
+          comandaId: true,
+          grossAmount: true,
+          commissionRate: true,
+          commissionAmount: true,
+          isPaid: true,
+          paidAt: true,
+          createdAt: true,
+          comanda: {
+            select: {
+              id: true,
+              appointmentId: true,
+              appointment: {
+                select: {
+                  service: { select: { name: true } },
+                  client: { select: { name: true } },
+                },
+              },
+            },
           },
-        })
-      : [];
+        },
+        orderBy: { createdAt: "desc" },
+      });
 
-    const aptMap = new Map(appointments.map((a) => [a.id, a]));
+      const totalGross = commissions.reduce((sum, item) => sum + Number(item.grossAmount), 0);
+      const totalCommission = commissions.reduce((sum, item) => sum + Number(item.commissionAmount), 0);
 
-    const result = commissions.map((c) => {
-      const apt = c.comanda?.appointmentId ? aptMap.get(c.comanda.appointmentId) : null;
-      return {
-        ...c,
-        comanda: c.comanda
-          ? { ...c.comanda, appointment: apt ? { service: apt.service, client: apt.client } : null }
-          : null,
-      };
-    });
-
-    const totalGross      = result.reduce((s, c) => s + Number(c.grossAmount), 0);
-    const totalCommission = result.reduce((s, c) => s + Number(c.commissionAmount), 0);
-    return { commissions: result, totalGross, totalCommission };
-  }, {
-    query: t.Object({ startDate: t.Optional(t.String()), endDate: t.Optional(t.String()) }),
-  });
+      return { commissions, totalGross, totalCommission };
+    },
+    {
+      query: t.Object({ startDate: t.Optional(t.String()), endDate: t.Optional(t.String()) }),
+    }
+  );

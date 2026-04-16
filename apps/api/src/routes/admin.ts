@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader, invalidateUserCache } from "../lib/getUser";
+import { publicRouteCache } from "../lib/ttlCache";
 import { startOfMonth, endOfMonth, startOfDay, endOfDay } from "date-fns";
 
 // ── Shared schemas ────────────────────────────────────────────────────────────
@@ -27,6 +28,10 @@ async function requireAdmin(authHeader: string | undefined, set: any) {
   if (!auth.user) { set.status = auth.status; return { error: auth.error }; }
   if (auth.user.role !== "ADMIN") { set.status = 403; return { error: "Acesso negado" }; }
   return auth.user;
+}
+
+function invalidatePublicBarberCache() {
+  publicRouteCache.deleteByPrefix("barbers:");
 }
 
 export const adminRoutes = new Elysia({ prefix: "/admin" })
@@ -83,14 +88,37 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
     const comandas = await prisma.comanda.findMany({
       where: { status: "CLOSED", paymentStatus: "PAID", closedAt: { gte: start, lte: end } },
-      include: {
-        appointment: {
-          include: {
-            service: { select: { name: true } },
-            barberProfile: { include: { user: { select: { name: true } } } },
+      select: {
+        id: true,
+        status: true,
+        totalAmount: true,
+        paymentMethod: true,
+        paymentStatus: true,
+        paidAt: true,
+        closedAt: true,
+        createdAt: true,
+        commission: {
+          select: {
+            id: true,
+            grossAmount: true,
+            commissionRate: true,
+            commissionAmount: true,
+            isPaid: true,
+            paidAt: true,
+            createdAt: true,
           },
         },
-        commission: true,
+        appointment: {
+          select: {
+            id: true,
+            service: { select: { name: true } },
+            barberProfile: {
+              select: {
+                user: { select: { name: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { closedAt: "asc" },
     });
@@ -140,6 +168,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
       include: { barberProfile: true },
     });
 
+    invalidatePublicBarberCache();
     set.status = 201;
     return newUser;
   }, {
@@ -191,6 +220,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     }
 
     invalidateUserCache(params.id);
+    invalidatePublicBarberCache();
 
     // Re-fetch with updated barberProfile
     return prisma.user.findUnique({
@@ -226,6 +256,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     });
 
     invalidateUserCache(params.id);
+    if (target.role === "BARBER") {
+      invalidatePublicBarberCache();
+    }
     return updated;
   })
 

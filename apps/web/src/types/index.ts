@@ -120,6 +120,15 @@ export interface Commission {
   commissionAmount: number;
   isPaid: boolean;
   paidAt?: string | null;
+  createdAt: string;
+  comanda?: {
+    id: string;
+    appointmentId: string;
+    appointment?: {
+      service?: Pick<Service, "name"> | null;
+      client?: Pick<User, "name"> | null;
+    } | null;
+  } | null;
 }
 
 export interface AuthTokens {
