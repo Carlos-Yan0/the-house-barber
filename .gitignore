@@ -5,3 +5,6 @@ dist/
 .DS_Store
 *.log
 apps/api/src/utils/seed.ts
+apps/api/src/utils/trocarSenha.ts
+backups/supabase_20260404_015231.dump
+backups/supabase_public_20260404_015231.dump

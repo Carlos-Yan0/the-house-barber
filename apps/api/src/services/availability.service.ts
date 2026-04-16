@@ -19,6 +19,10 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+function toMinuteKey(date: Date): number {
+  return date.getTime();
+}
+
 /**
  * Returns available time slots (HH:mm strings in BRT) for a given barber, date and service.
  *
@@ -83,36 +87,46 @@ export async function getAvailableSlots(
   const [sh, sm] = schedule.startTime.split(":").map(Number);
   const [eh, em] = schedule.endTime.split(":").map(Number);
 
-  let slotStart  = fromZonedTime(`${dateStr}T${pad(sh)}:${pad(sm)}:00`, TIMEZONE);
+  const schedStart = fromZonedTime(`${dateStr}T${pad(sh)}:${pad(sm)}:00`, TIMEZONE);
+  let slotStart  = schedStart;
   const schedEnd = fromZonedTime(`${dateStr}T${pad(eh)}:${pad(em)}:00`, TIMEZONE);
 
   const now    = new Date();
   const cutoff = addMinutes(now, 5);
 
-  const slots: string[] = [];
+  const candidateStarts = new Map<number, Date>();
 
   while (isBefore(slotStart, schedEnd)) {
-    const slotEnd = addMinutes(slotStart, serviceDuration);
-
-    if (isAfter(slotEnd, schedEnd)) break;
-
-    if (isBefore(slotStart, cutoff)) {
-      slotStart = addMinutes(slotStart, schedule.slotDuration);
-      continue;
-    }
-
-    const hasConflict = existing.some(
-      (apt) =>
-        isBefore(slotStart, apt.endsAt) &&
-        isAfter(slotEnd, apt.scheduledAt)
-    );
-
-    if (!hasConflict) {
-      slots.push(format(toZonedTime(slotStart, TIMEZONE), "HH:mm"));
-    }
-
+    candidateStarts.set(toMinuteKey(slotStart), slotStart);
     slotStart = addMinutes(slotStart, schedule.slotDuration);
   }
+
+  for (const apt of existing) {
+    if (
+      !isBefore(apt.endsAt, schedStart) &&
+      !isAfter(apt.endsAt, schedEnd)
+    ) {
+      candidateStarts.set(toMinuteKey(apt.endsAt), apt.endsAt);
+    }
+  }
+
+  const slots = [...candidateStarts.values()]
+    .sort((a, b) => a.getTime() - b.getTime())
+    .filter((candidateStart) => !isBefore(candidateStart, cutoff))
+    .filter((candidateStart) => {
+      const slotEnd = addMinutes(candidateStart, serviceDuration);
+
+      if (isAfter(slotEnd, schedEnd)) return false;
+
+      return !existing.some(
+        (apt) =>
+          isBefore(candidateStart, apt.endsAt) &&
+          isAfter(slotEnd, apt.scheduledAt)
+      );
+    })
+    .map((candidateStart) =>
+      format(toZonedTime(candidateStart, TIMEZONE), "HH:mm")
+    );
 
   return slots;
 }
