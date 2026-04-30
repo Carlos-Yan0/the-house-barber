@@ -59,6 +59,13 @@ export async function getAvailableSlots(
       schedules: {
         where: { dayOfWeek, isActive: true },
         take: 1,
+        select: {
+          startTime: true,
+          endTime: true,
+          slotDuration: true,
+          lunchStartTime: true,
+          lunchEndTime: true,
+        },
       },
       blockedDates: {
         where: { date: blockedDateUTC },
@@ -91,6 +98,18 @@ export async function getAvailableSlots(
   let slotStart  = schedStart;
   const schedEnd = fromZonedTime(`${dateStr}T${pad(eh)}:${pad(em)}:00`, TIMEZONE);
 
+  const lunchStartEnd =
+    schedule.lunchStartTime && schedule.lunchEndTime
+      ? (() => {
+          const [lsh, lsm] = schedule.lunchStartTime.split(":").map(Number);
+          const [leh, lem] = schedule.lunchEndTime.split(":").map(Number);
+          return {
+            lunchStart: fromZonedTime(`${dateStr}T${pad(lsh)}:${pad(lsm)}:00`, TIMEZONE),
+            lunchEnd: fromZonedTime(`${dateStr}T${pad(leh)}:${pad(lem)}:00`, TIMEZONE),
+          };
+        })()
+      : null;
+
   const now    = new Date();
   const cutoff = addMinutes(now, 5);
 
@@ -117,6 +136,13 @@ export async function getAvailableSlots(
       const slotEnd = addMinutes(candidateStart, serviceDuration);
 
       if (isAfter(slotEnd, schedEnd)) return false;
+
+      if (lunchStartEnd) {
+        const overlapsLunch =
+          isBefore(candidateStart, lunchStartEnd.lunchEnd) &&
+          isAfter(slotEnd, lunchStartEnd.lunchStart);
+        if (overlapsLunch) return false;
+      }
 
       return !existing.some(
         (apt) =>

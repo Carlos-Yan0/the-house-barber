@@ -134,6 +134,21 @@ async function notifyAvailabilitySubscribers(barberId: string, date: string) {
   }
 }
 
+/** Reenvia slots para todos os clientes com WebSocket aberto para este barbeiro (qualquer data/serviço). */
+export async function notifyAvailabilitySubscribersForBarber(barberProfileId: string) {
+  const subscribers = [...availabilitySubscriptions.values()].filter(
+    ({ query }) => query.barberId === barberProfileId
+  );
+
+  for (const subscriber of subscribers) {
+    try {
+      await sendAvailabilitySnapshot(subscriber.ws, subscriber.query);
+    } catch {
+      availabilitySubscriptions.delete(subscriber.id);
+    }
+  }
+}
+
 function isAppointmentConflictError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") return true;

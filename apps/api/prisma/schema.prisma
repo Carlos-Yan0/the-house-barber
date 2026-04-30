@@ -97,6 +97,8 @@ model BarberSchedule {
   dayOfWeek       DayOfWeek @map("day_of_week")
   startTime       String    @map("start_time")
   endTime         String    @map("end_time")
+  lunchStartTime  String?   @map("lunch_start_time")
+  lunchEndTime    String?   @map("lunch_end_time")
   slotDuration    Int       @default(30) @map("slot_duration")
   isActive        Boolean   @default(true) @map("is_active")
   createdAt       DateTime  @default(now()) @map("created_at")

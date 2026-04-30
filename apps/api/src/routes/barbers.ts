@@ -1,11 +1,53 @@
 // src/routes/barbers.ts
 import Elysia, { t } from "elysia";
 import { Prisma } from "@prisma/client";
+import { isBefore, isAfter, format } from "date-fns";
+import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader } from "../lib/getUser";
 import { publicRouteCache } from "../lib/ttlCache";
+import { notifyAvailabilitySubscribersForBarber } from "./appointments";
 
 const PUBLIC_BARBERS_CACHE_TTL_MS = 60_000;
+const SCHEDULE_TZ = "America/Sao_Paulo";
+
+const JS_DAY_TO_DAY_OF_WEEK: Record<number, string> = {
+  0: "SUNDAY",
+  1: "MONDAY",
+  2: "TUESDAY",
+  3: "WEDNESDAY",
+  4: "THURSDAY",
+  5: "FRIDAY",
+  6: "SATURDAY",
+};
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Almoço [lunchStart, lunchEnd); agendamento [scheduledAt, endsAt) — mesma semântica do availability.service. */
+function appointmentOverlapsLunchWindow(
+  scheduledAt: Date,
+  endsAt: Date,
+  scheduleDayOfWeek: string,
+  lunchStartHHmm: string,
+  lunchEndHHmm: string
+): boolean {
+  const zonedStart = toZonedTime(scheduledAt, SCHEDULE_TZ);
+  const localDay = JS_DAY_TO_DAY_OF_WEEK[zonedStart.getDay()];
+  if (localDay !== scheduleDayOfWeek) return false;
+
+  const dateStr = format(zonedStart, "yyyy-MM-dd");
+  const [lsh, lsm] = lunchStartHHmm.split(":").map(Number);
+  const [leh, lem] = lunchEndHHmm.split(":").map(Number);
+  const lunchStart = fromZonedTime(`${dateStr}T${pad2(lsh)}:${pad2(lsm)}:00`, SCHEDULE_TZ);
+  const lunchEnd = fromZonedTime(`${dateStr}T${pad2(leh)}:${pad2(lem)}:00`, SCHEDULE_TZ);
+
+  return isBefore(scheduledAt, lunchEnd) && isAfter(endsAt, lunchStart);
+}
+
+const LUNCH_CONFLICT_MESSAGE =
+  "Não foi possível colocar esse horário de almoço pois já há um agendamento marcado para esse horário. Tente outro dia.";
 
 function isInvalidScheduleError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2004") {
@@ -13,7 +55,10 @@ function isInvalidScheduleError(error: unknown): boolean {
     return (
       details.includes("barber_schedules_start_time_format_chk") ||
       details.includes("barber_schedules_end_time_format_chk") ||
-      details.includes("barber_schedules_start_before_end_chk")
+      details.includes("barber_schedules_start_before_end_chk") ||
+      details.includes("barber_schedules_lunch_start_time_format_chk") ||
+      details.includes("barber_schedules_lunch_end_time_format_chk") ||
+      details.includes("barber_schedules_lunch_start_before_end_chk")
     );
   }
 
@@ -21,7 +66,10 @@ function isInvalidScheduleError(error: unknown): boolean {
     return (
       error.message.includes("barber_schedules_start_time_format_chk") ||
       error.message.includes("barber_schedules_end_time_format_chk") ||
-      error.message.includes("barber_schedules_start_before_end_chk")
+      error.message.includes("barber_schedules_start_before_end_chk") ||
+      error.message.includes("barber_schedules_lunch_start_time_format_chk") ||
+      error.message.includes("barber_schedules_lunch_end_time_format_chk") ||
+      error.message.includes("barber_schedules_lunch_start_before_end_chk")
     );
   }
 
@@ -61,6 +109,8 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
               dayOfWeek: true,
               startTime: true,
               endTime: true,
+              lunchStartTime: true,
+              lunchEndTime: true,
               slotDuration: true,
               isActive: true,
             },
@@ -100,6 +150,8 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
               dayOfWeek: true,
               startTime: true,
               endTime: true,
+              lunchStartTime: true,
+              lunchEndTime: true,
               slotDuration: true,
               isActive: true,
             },
@@ -177,6 +229,45 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
 
       const { schedules } = body as { schedules: Array<Record<string, unknown>> };
       try {
+        const normalizeLunch = (s: Record<string, unknown>) => {
+          const start = s.lunchStartTime;
+          const end = s.lunchEndTime;
+          const startStr = typeof start === "string" ? start.trim() : null;
+          const endStr = typeof end === "string" ? end.trim() : null;
+          if (!startStr || !endStr) return { lunchStartTime: null, lunchEndTime: null };
+          return { lunchStartTime: startStr, lunchEndTime: endStr };
+        };
+
+        const activeAppointments = await prisma.appointment.findMany({
+          where: {
+            barberProfileId: params.id,
+            status: { notIn: ["CANCELLED", "NO_SHOW"] },
+          },
+          select: { scheduledAt: true, endsAt: true },
+        });
+
+        for (const s of schedules) {
+          const lunch = normalizeLunch(s);
+          if (!lunch.lunchStartTime || !lunch.lunchEndTime) continue;
+          if (s.isActive !== true) continue;
+
+          const dayKey = String(s.dayOfWeek);
+          for (const apt of activeAppointments) {
+            if (
+              appointmentOverlapsLunchWindow(
+                apt.scheduledAt,
+                apt.endsAt,
+                dayKey,
+                lunch.lunchStartTime,
+                lunch.lunchEndTime
+              )
+            ) {
+              set.status = 422;
+              return { error: LUNCH_CONFLICT_MESSAGE };
+            }
+          }
+        }
+
         const result = await Promise.all(
           schedules.map((s) =>
             prisma.barberSchedule.upsert({
@@ -186,23 +277,28 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
                   dayOfWeek: s.dayOfWeek as never,
                 },
               },
-              create: { barberProfileId: params.id, ...s } as never,
+              create: { barberProfileId: params.id, ...s, ...normalizeLunch(s) } as never,
               update: {
                 startTime: s.startTime as string,
                 endTime: s.endTime as string,
                 slotDuration: s.slotDuration as number,
                 isActive: s.isActive as boolean,
+                ...normalizeLunch(s),
               },
             })
           )
         );
 
         invalidatePublicBarberCache();
+        await notifyAvailabilitySubscribersForBarber(params.id);
         return result;
       } catch (error) {
         if (isInvalidScheduleError(error)) {
           set.status = 422;
-          return { error: "Horários inválidos. Use HH:mm e garanta startTime < endTime." };
+          return {
+            error:
+              "Horários inválidos. Use HH:mm e garanta startTime < endTime (e, se houver almoço, lunchStartTime < lunchEndTime).",
+          };
         }
         throw error;
       }
@@ -214,6 +310,8 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
             dayOfWeek: t.String(),
             startTime: t.String(),
             endTime: t.String(),
+            lunchStartTime: t.Optional(t.Union([t.String(), t.Null()])),
+            lunchEndTime: t.Optional(t.Union([t.String(), t.Null()])),
             slotDuration: t.Number(),
             isActive: t.Boolean(),
           })

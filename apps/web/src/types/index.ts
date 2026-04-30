@@ -70,6 +70,8 @@ export interface BarberSchedule {
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
+  lunchStartTime?: string | null;
+  lunchEndTime?: string | null;
   slotDuration: number;
   isActive: boolean;
 }

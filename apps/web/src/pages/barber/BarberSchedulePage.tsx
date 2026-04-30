@@ -20,6 +20,9 @@ const DEFAULT_SCHEDULE = DAYS.map((day) => ({
   dayOfWeek: day,
   startTime: "09:00",
   endTime: "18:00",
+  hasLunchBreak: false,
+  lunchStartTime: "",
+  lunchEndTime: "",
   slotDuration: 30,
   isActive: false,
 }));
@@ -28,6 +31,9 @@ interface ScheduleForm {
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
+  hasLunchBreak: boolean;
+  lunchStartTime: string;
+  lunchEndTime: string;
   slotDuration: number;
   isActive: boolean;
 }
@@ -53,10 +59,16 @@ export function BarberSchedulePage() {
     if (!barberData || hydrated) return;
     const filled = DAYS.map((day) => {
       const existing = (barberData as any).schedules?.find((s: any) => s.dayOfWeek === day);
+      const lunchStart = existing?.lunchStartTime ?? null;
+      const lunchEnd = existing?.lunchEndTime ?? null;
+      const hasLunchBreak = !!(lunchStart && lunchEnd);
       return {
         dayOfWeek: day,
         startTime:    existing?.startTime    ?? "09:00",
         endTime:      existing?.endTime      ?? "18:00",
+        hasLunchBreak,
+        lunchStartTime: hasLunchBreak ? lunchStart : "",
+        lunchEndTime:   hasLunchBreak ? lunchEnd   : "",
         slotDuration: existing?.slotDuration ?? 30,
         isActive:     existing?.isActive     ?? false,
       };
@@ -65,14 +77,58 @@ export function BarberSchedulePage() {
     setHydrated(true);
   }, [barberData, hydrated]);
 
+  const validateSchedules = (): boolean => {
+    for (const s of schedules) {
+      if (!s.isActive) continue;
+
+      if (!s.hasLunchBreak) continue;
+
+      const ls = s.lunchStartTime.trim();
+      const le = s.lunchEndTime.trim();
+      if (!ls || !le) continue; // parcial será ignorado (enviado como null)
+
+      if (!(s.startTime < ls && ls < le && le < s.endTime)) {
+        toast.error(
+          `Em ${DAY_LABELS[s.dayOfWeek]}, o almoço precisa ficar entre o horário de abertura e o de fechamento do dia. Ajuste e salve de novo.`
+        );
+        return false;
+      }
+    }
+    return true;
+  };
+
   const saveMutation = useMutation({
-    mutationFn: () => barbersApi.updateSchedule(barberId!, schedules),
+    mutationFn: () => {
+      if (!validateSchedules()) return Promise.reject(new Error("__INVALID_LUNCH_WITHIN_WORKING_HOURS__"));
+
+      const payload = schedules.map((s) => {
+        const ls = s.lunchStartTime.trim();
+        const le = s.lunchEndTime.trim();
+        const normalizedLunch =
+          s.isActive && s.hasLunchBreak && ls && le
+            ? { lunchStartTime: ls, lunchEndTime: le }
+            : { lunchStartTime: null, lunchEndTime: null };
+
+        return {
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          slotDuration: s.slotDuration,
+          isActive: s.isActive,
+          ...normalizedLunch,
+        };
+      });
+
+      return barbersApi.updateSchedule(barberId!, payload);
+    },
     onSuccess: () => {
       toast.success("Agenda atualizada!");
       qc.invalidateQueries({ queryKey: ["barber-schedule"] });
     },
-    onError: (err: unknown) =>
-      toast.error(getApiErrorMessage(err, "Erro ao salvar a agenda")),
+    onError: (err: unknown) => {
+      if (err instanceof Error && err.message === "__INVALID_LUNCH_WITHIN_WORKING_HOURS__") return;
+      toast.error(getApiErrorMessage(err, "Erro ao salvar a agenda"));
+    },
   });
 
   const blockMutation = useMutation({
@@ -205,7 +261,65 @@ export function BarberSchedulePage() {
                     />
                   </div>
 
-                  {/* Slot */}
+                </div>
+              )}
+
+              {/* Almoço (somente se o dia estiver ativo) */}
+              {s.isActive && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--text-muted)]">Almoço</span>
+                    <label className="flex items-center gap-2 text-xs text-[var(--text-muted)] select-none cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={s.hasLunchBreak}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          updateSchedule(s.dayOfWeek, "hasLunchBreak", checked);
+                          if (!checked) {
+                            updateSchedule(s.dayOfWeek, "lunchStartTime", "");
+                            updateSchedule(s.dayOfWeek, "lunchEndTime", "");
+                          }
+                        }}
+                        className="accent-gold-600"
+                      />
+                      Habilitar
+                    </label>
+                  </div>
+
+                  {s.hasLunchBreak && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="section-label">Início</span>
+                        <input
+                          type="time"
+                          value={s.lunchStartTime}
+                          onChange={(e) => updateSchedule(s.dayOfWeek, "lunchStartTime", e.target.value)}
+                          className="w-full bg-dark-400 border border-dark-50 rounded-lg px-2 py-2 text-white text-sm
+                                     focus:outline-none focus:border-gold-600 transition-all
+                                     [color-scheme:dark]"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <span className="section-label">Fim</span>
+                        <input
+                          type="time"
+                          value={s.lunchEndTime}
+                          onChange={(e) => updateSchedule(s.dayOfWeek, "lunchEndTime", e.target.value)}
+                          className="w-full bg-dark-400 border border-dark-50 rounded-lg px-2 py-2 text-white text-sm
+                                     focus:outline-none focus:border-gold-600 transition-all
+                                     [color-scheme:dark]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Slot (após almoço) */}
+              {s.isActive && (
+                <div className="mt-3 grid grid-cols-1 gap-3 max-w-[220px]">
                   <div className="flex flex-col gap-1">
                     <span className="section-label">Slot</span>
                     <select
