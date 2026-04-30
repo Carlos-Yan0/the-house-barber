@@ -1,5 +1,5 @@
 // src/pages/barber/BarberDashboardPage.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, startOfDay, isSameDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -186,6 +186,9 @@ export function BarberDashboardPage() {
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const isViewingToday = selectedDateStr === todayStr;
 
+  const [isSwitchingDate, setIsSwitchingDate] = useState(false);
+  const [requestedDateStr, setRequestedDateStr] = useState(selectedDateStr);
+
   const {
     data: appointmentsData,
     isLoading: loadingAppointments,
@@ -196,6 +199,17 @@ export function BarberDashboardPage() {
       appointmentsApi.list({ date: selectedDateStr, limit: 50 }).then((r) => r.data),
     enabled: !!barberId,
   });
+
+  useEffect(() => {
+    setIsSwitchingDate(true);
+    setRequestedDateStr(selectedDateStr);
+  }, [selectedDateStr]);
+
+  useEffect(() => {
+    if (!fetchingAppointments && requestedDateStr === selectedDateStr) {
+      setIsSwitchingDate(false);
+    }
+  }, [fetchingAppointments, requestedDateStr, selectedDateStr]);
 
   const { data: earningsData } = useQuery({
     queryKey: ["barber-earnings-month", barberId],
@@ -243,7 +257,7 @@ export function BarberDashboardPage() {
     setSelectedPayment("CASH");
   };
 
-  const appointments: Appointment[] = (appointmentsData?.data ?? []).filter(
+  const appointments: Appointment[] = (isSwitchingDate ? [] : appointmentsData?.data ?? []).filter(
     (a: Appointment) => !barberId || a.barberProfileId === barberId
   );
   const sortedAppointments = [...appointments].sort(
@@ -259,7 +273,8 @@ export function BarberDashboardPage() {
   const dateLabel = isViewingToday
     ? "Hoje"
     : format(selectedDate, "dd 'de' MMMM", { locale: ptBR });
-  const isUpdatingAppointments = fetchingAppointments && !loadingAppointments;
+  const shouldShowSpinner = loadingAppointments || isSwitchingDate;
+  const isUpdatingAppointments = fetchingAppointments && !loadingAppointments && !isSwitchingDate;
 
   return (
     <div className="page-container animate-fade-in">
@@ -348,12 +363,12 @@ export function BarberDashboardPage() {
 
       <p className="section-label mb-3">
         {dateLabel} —{" "}
-        {loadingAppointments
+        {shouldShowSpinner
           ? "carregando…"
           : `${appointments.length} agendamento${appointments.length !== 1 ? "s" : ""}`}
       </p>
 
-      {loadingAppointments ? (
+      {shouldShowSpinner ? (
         <div className="flex justify-center py-10">
           <Spinner />
         </div>
