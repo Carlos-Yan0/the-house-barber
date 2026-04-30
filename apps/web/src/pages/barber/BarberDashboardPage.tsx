@@ -186,7 +186,11 @@ export function BarberDashboardPage() {
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const isViewingToday = selectedDateStr === todayStr;
 
-  const { data: appointmentsData, isLoading: loadingAppointments } = useQuery({
+  const {
+    data: appointmentsData,
+    isLoading: loadingAppointments,
+    isFetching: fetchingAppointments,
+  } = useQuery({
     queryKey: ["barber-appointments", selectedDateStr],
     queryFn: () =>
       appointmentsApi.list({ date: selectedDateStr, limit: 50 }).then((r) => r.data),
@@ -255,6 +259,7 @@ export function BarberDashboardPage() {
   const dateLabel = isViewingToday
     ? "Hoje"
     : format(selectedDate, "dd 'de' MMMM", { locale: ptBR });
+  const isUpdatingAppointments = fetchingAppointments && !loadingAppointments;
 
   return (
     <div className="page-container animate-fade-in">
@@ -282,7 +287,15 @@ export function BarberDashboardPage() {
 
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-display font-semibold text-white">Agenda</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display font-semibold text-white">Agenda</h2>
+            {isUpdatingAppointments && (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <Spinner size={14} className="text-[var(--text-muted)]" />
+                Atualizando…
+              </div>
+            )}
+          </div>
           <div className="flex gap-1">
             <button
               onClick={() => setWindowStart((p) => Math.max(0, p - STEP))}
@@ -355,7 +368,15 @@ export function BarberDashboardPage() {
           }
         />
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden relative">
+          {isUpdatingAppointments && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-dark-300/50 backdrop-blur-[1px]">
+              <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <Spinner size={16} />
+                Buscando horários…
+              </div>
+            </div>
+          )}
           <div className="p-3 overflow-y-auto" style={{ maxHeight: "65vh" }}>
             <AppointmentTimeline
               appointments={sortedAppointments}
