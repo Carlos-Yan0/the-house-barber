@@ -1,5 +1,5 @@
 // src/pages/admin/AdminDashboardPage.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, startOfDay, isSameDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -222,17 +222,35 @@ export function AdminDashboardPage() {
   const todayStr        = format(new Date(), "yyyy-MM-dd");
   const isViewingToday  = selectedDateStr === todayStr;
 
+  const [isSwitchingDate, setIsSwitchingDate] = useState(false);
+  const [requestedDateStr, setRequestedDateStr] = useState(selectedDateStr);
+
   const { data: stats, isLoading: loadingStats } = useQuery({
     queryKey: ["admin-dashboard"],
     queryFn: () => adminApi.dashboard().then((r) => r.data),
     refetchInterval: 60_000,
   });
 
-  const { data: dayData, isLoading: loadingDay } = useQuery({
+  const {
+    data: dayData,
+    isLoading: loadingDay,
+    isFetching: fetchingDay,
+  } = useQuery({
     queryKey: ["admin-appointments-day", selectedDateStr],
     queryFn: () =>
       appointmentsApi.list({ date: selectedDateStr, limit: 100 }).then((r) => r.data),
   });
+
+  useEffect(() => {
+    setIsSwitchingDate(true);
+    setRequestedDateStr(selectedDateStr);
+  }, [selectedDateStr]);
+
+  useEffect(() => {
+    if (!fetchingDay && requestedDateStr === selectedDateStr) {
+      setIsSwitchingDate(false);
+    }
+  }, [fetchingDay, requestedDateStr, selectedDateStr]);
 
   const closeMutation = useMutation({
     mutationFn: () => comandasApi.close(closeModal!, selectedPayment),
@@ -269,7 +287,7 @@ export function AdminDashboardPage() {
     setSelectedPayment("CASH");
   };
 
-  const allAppointments: Appointment[] = dayData?.data ?? [];
+  const allAppointments: Appointment[] = isSwitchingDate ? [] : dayData?.data ?? [];
 
   const filteredAppointments = showAll
     ? allAppointments
@@ -285,6 +303,8 @@ export function AdminDashboardPage() {
   const dateLabel    = isViewingToday
     ? "Hoje"
     : format(selectedDate, "dd 'de' MMMM", { locale: ptBR });
+  const shouldShowSpinner = loadingDay || isSwitchingDate;
+  const isUpdatingDay = fetchingDay && !loadingDay && !isSwitchingDate;
 
   if (loadingStats) {
     return (
@@ -320,7 +340,15 @@ export function AdminDashboardPage() {
       {/* ── Seletor de data ── */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-display font-semibold text-white">Agenda</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-display font-semibold text-white">Agenda</h2>
+            {isUpdatingDay && (
+              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <Spinner size={14} className="text-[var(--text-muted)]" />
+                Atualizando…
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowAll((v) => !v)}
@@ -386,12 +414,12 @@ export function AdminDashboardPage() {
       {/* ── Timeline ── */}
       <p className="section-label mb-3">
         {dateLabel} —{" "}
-        {loadingDay
+        {shouldShowSpinner
           ? "carregando…"
           : `${sortedAppointments.length} agendamento${sortedAppointments.length !== 1 ? "s" : ""}${showAll ? " (todos)" : ""}`}
       </p>
 
-      {loadingDay ? (
+      {shouldShowSpinner ? (
         <div className="flex justify-center py-10">
           <Spinner />
         </div>
@@ -406,7 +434,15 @@ export function AdminDashboardPage() {
           }
         />
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden relative">
+          {isUpdatingDay && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-dark-300/50 backdrop-blur-[1px]">
+              <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <Spinner size={16} />
+                Buscando horários…
+              </div>
+            </div>
+          )}
           <div className="p-3 overflow-y-auto" style={{ maxHeight: "65vh" }}>
             <AppointmentTimeline
               appointments={sortedAppointments}
