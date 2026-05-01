@@ -1,4 +1,5 @@
 // src/services/availability.service.ts
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { addMinutes, isBefore, isAfter, format } from "date-fns";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
@@ -23,6 +24,10 @@ function toMinuteKey(date: Date): number {
   return date.getTime();
 }
 
+type AvailabilityDbClient =
+  | Pick<PrismaClient, "barberProfile">
+  | Pick<Prisma.TransactionClient, "barberProfile">;
+
 /**
  * Returns available time slots (HH:mm strings in BRT) for a given barber, date and service.
  *
@@ -38,7 +43,8 @@ function toMinuteKey(date: Date): number {
 export async function getAvailableSlots(
   barberProfileId: string,
   dateStr: string,
-  serviceDuration: number
+  serviceDuration: number,
+  db: AvailabilityDbClient = prisma
 ): Promise<string[]> {
   // ── 1. Determinar dia da semana ───────────────────────────────────────────
   const [year, month, day] = dateStr.split("-").map(Number);
@@ -53,7 +59,7 @@ export async function getAvailableSlots(
   const dayEnd   = fromZonedTime(`${dateStr}T23:59:59`, TIMEZONE);
 
   // ── 2. Single DB query (was 3 round-trips) ───────────────────────────────
-  const barberData = await prisma.barberProfile.findUnique({
+  const barberData = await db.barberProfile.findUnique({
     where: { id: barberProfileId },
     select: {
       schedules: {

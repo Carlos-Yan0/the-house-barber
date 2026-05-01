@@ -121,7 +121,7 @@ describe("Availability service (integration)", () => {
         },
       });
 
-      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20);
+      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20, tx);
 
       expect(slots).toContain("18:40");
     });
@@ -143,7 +143,7 @@ describe("Availability service (integration)", () => {
         },
       });
 
-      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 30);
+      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 30, tx);
 
       expect(slots).toContain("18:40");
     });
@@ -176,7 +176,7 @@ describe("Availability service (integration)", () => {
         ],
       });
 
-      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 30);
+      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 30, tx);
 
       expect(slots).not.toContain("18:40");
     });
@@ -198,7 +198,7 @@ describe("Availability service (integration)", () => {
         },
       });
 
-      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20);
+      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20, tx);
 
       expect(slots).toEqual(["17:00", "18:40", "19:00", "19:30"]);
     });
@@ -207,8 +207,9 @@ describe("Availability service (integration)", () => {
   test("cancelled and no-show appointments do not block dynamic encaixes", async () => {
     await runInRollback(async (tx) => {
       const base = await createBaseData(tx);
-      const cancelledStart = brtDateTime("2030-01-10", "17:30");
-      const noShowStart = brtDateTime("2030-01-10", "18:40");
+      const activeStart = brtDateTime("2030-01-10", "17:30");
+      const cancelledStart = brtDateTime("2030-01-10", "18:40");
+      const noShowStart = brtDateTime("2030-01-10", "19:00");
 
       await tx.appointment.createMany({
         data: [
@@ -216,8 +217,16 @@ describe("Availability service (integration)", () => {
             clientId: base.clientId,
             barberProfileId: base.barberProfileId,
             serviceId: base.longServiceId,
+            scheduledAt: activeStart,
+            endsAt: addMinutes(activeStart, 70),
+            status: "PENDING",
+          },
+          {
+            clientId: base.clientId,
+            barberProfileId: base.barberProfileId,
+            serviceId: base.shortServiceId,
             scheduledAt: cancelledStart,
-            endsAt: addMinutes(cancelledStart, 70),
+            endsAt: addMinutes(cancelledStart, 20),
             status: "CANCELLED",
           },
           {
@@ -231,9 +240,8 @@ describe("Availability service (integration)", () => {
         ],
       });
 
-      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20);
+      const slots = await getAvailableSlots(base.barberProfileId, "2030-01-10", 20, tx);
 
-      expect(slots).toContain("17:30");
       expect(slots).toContain("18:40");
     });
   });

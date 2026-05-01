@@ -6,6 +6,7 @@ import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { prisma } from "../lib/prisma";
 import { getUserFromHeader } from "../lib/getUser";
 import { publicRouteCache } from "../lib/ttlCache";
+import { hasLunchConflictWithFutureAppointments } from "../lib/lunchConflicts";
 import { notifyAvailabilitySubscribersForBarber } from "./appointments";
 
 const PUBLIC_BARBERS_CACHE_TTL_MS = 60_000;
@@ -24,6 +25,11 @@ const JS_DAY_TO_DAY_OF_WEEK: Record<number, string> = {
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
+
+type LunchConflictAppointment = {
+  scheduledAt: Date;
+  endsAt: Date;
+};
 
 /** Almoço [lunchStart, lunchEnd); agendamento [scheduledAt, endsAt) — mesma semântica do availability.service. */
 function appointmentOverlapsLunchWindow(
@@ -44,6 +50,26 @@ function appointmentOverlapsLunchWindow(
   const lunchEnd = fromZonedTime(`${dateStr}T${pad2(leh)}:${pad2(lem)}:00`, SCHEDULE_TZ);
 
   return isBefore(scheduledAt, lunchEnd) && isAfter(endsAt, lunchStart);
+}
+
+export function hasLunchConflictWithFutureAppointments(
+  appointments: LunchConflictAppointment[],
+  scheduleDayOfWeek: string,
+  lunchStartHHmm: string,
+  lunchEndHHmm: string,
+  now: Date = new Date()
+): boolean {
+  return appointments.some(
+    (appointment) =>
+      isAfter(appointment.endsAt, now) &&
+      appointmentOverlapsLunchWindow(
+        appointment.scheduledAt,
+        appointment.endsAt,
+        scheduleDayOfWeek,
+        lunchStartHHmm,
+        lunchEndHHmm
+      )
+  );
 }
 
 const LUNCH_CONFLICT_MESSAGE =
@@ -237,11 +263,13 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
           if (!startStr || !endStr) return { lunchStartTime: null, lunchEndTime: null };
           return { lunchStartTime: startStr, lunchEndTime: endStr };
         };
+        const now = new Date();
 
         const activeAppointments = await prisma.appointment.findMany({
           where: {
             barberProfileId: params.id,
             status: { notIn: ["CANCELLED", "NO_SHOW"] },
+            endsAt: { gt: now },
           },
           select: { scheduledAt: true, endsAt: true },
         });
@@ -252,19 +280,17 @@ export const barberRoutes = new Elysia({ prefix: "/barbers" })
           if (s.isActive !== true) continue;
 
           const dayKey = String(s.dayOfWeek);
-          for (const apt of activeAppointments) {
-            if (
-              appointmentOverlapsLunchWindow(
-                apt.scheduledAt,
-                apt.endsAt,
-                dayKey,
-                lunch.lunchStartTime,
-                lunch.lunchEndTime
-              )
-            ) {
-              set.status = 422;
-              return { error: LUNCH_CONFLICT_MESSAGE };
-            }
+          if (
+            hasLunchConflictWithFutureAppointments(
+              activeAppointments,
+              dayKey,
+              lunch.lunchStartTime,
+              lunch.lunchEndTime,
+              now
+            )
+          ) {
+            set.status = 422;
+            return { error: LUNCH_CONFLICT_MESSAGE };
           }
         }
 
