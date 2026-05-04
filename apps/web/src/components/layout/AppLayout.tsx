@@ -51,7 +51,7 @@ const BOTTOM_NAV_HEIGHT = "4rem";
 
 const BOTTOM_NAV_BY_ROLE: Record<string, string[]> = {
   CLIENT: ["/agendar", "/agendamentos", "/perfil"],
-  BARBER: ["/barbeiro/dashboard", "/barbeiro/agenda", "/barbeiro/comandas", "/barbeiro/ganhos", "/perfil"],
+  BARBER: ["/barbeiro/dashboard", "/barbeiro/agenda", "/agendar", "/barbeiro/comandas", "/barbeiro/ganhos", "/perfil"],
 };
 
 export function AppLayout() {
